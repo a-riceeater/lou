@@ -72,7 +72,13 @@ export interface RunState {
   error: SerializedError | null;
   /** Number of tool calls that produced a real side effect (for history outcome). */
   actionsTaken: number;
+  /** Which model provider drives this run; resumption goes back to the same one. */
+  provider?: ProviderId;
+  /** Codex App Server linkage (Codex provider only). */
+  codex?: { threadId: string; turnId: string | null };
 }
+
+export type ProviderId = "openai_api" | "codex_cli";
 
 export interface RunStore {
   create(state: RunState): Promise<void>;
@@ -83,6 +89,8 @@ export interface RunStore {
 export interface ProgressSink {
   progress(state: RunState, label?: string): void;
   completed(state: RunState): void;
+  /** Streamed assistant text, when the provider streams. */
+  delta?(state: RunState, text: string): void;
 }
 
 export interface RunContext {

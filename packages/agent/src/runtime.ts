@@ -9,7 +9,17 @@ import {
 } from "@lou/tools";
 import type { ModelMessage, ModelRouter, ModelToolCall } from "./model";
 import { formatContext, SYSTEM_PROMPT } from "./prompts";
-import { ENABLE_FAMILY_TOOL, familyTools, formatToolResult, recordToolOutcome } from "./shared";
+import {
+  beginResume,
+  ENABLE_FAMILY_TOOL,
+  executeApproved,
+  familyTools,
+  formatToolResult,
+  recordToolOutcome,
+  rejectionMessage,
+  RunDriver,
+  type LoopOutcome,
+} from "./shared";
 import type { AgentContinuation, AgentInput, AgentRunResult, AgentRuntime, ContextProvider, ProgressSink, RunState, RunStore } from "./types";
 
 export { ENABLE_FAMILY_TOOL, SKILL_READ_TOOL } from "./shared";
@@ -35,20 +45,19 @@ export interface CustomRuntimeDeps {
   maxToolResultChars?: number;
 }
 
-type LoopOutcome = "completed" | "paused";
-
 /**
  * The custom Luna runtime: a bounded model ↔ tool loop with persisted state,
  * policy-gated tool execution, approval pauses and resumption from any device.
  */
 export class CustomLunaRuntime implements AgentRuntime {
-  private readonly active = new Map<string, AbortController>();
+  private readonly driver: RunDriver;
   private readonly maxSteps: number;
   private readonly maxToolResultChars: number;
 
   constructor(private readonly deps: CustomRuntimeDeps) {
     this.maxSteps = deps.maxSteps ?? 10;
     this.maxToolResultChars = deps.maxToolResultChars ?? 12_000;
+    this.driver = new RunDriver(deps.runs, deps.progress, deps.logger);
   }
 
   async run(input: AgentInput): Promise<AgentRunResult> {
@@ -83,24 +92,15 @@ export class CustomLunaRuntime implements AgentRuntime {
       finalMessage: null,
       error: null,
       actionsTaken: 0,
+      provider: "openai_api",
     };
     await this.deps.runs.create(state);
-    return this.drive(state, async (signal) => this.loop(state, signal));
+    return this.driver.drive(state, async (signal) => this.loop(state, signal));
   }
 
   async resume(runId: string, continuation: AgentContinuation): Promise<AgentRunResult> {
-    const state = await this.deps.runs.load(runId);
-    if (!state) throw new LouError("NOT_FOUND", `Run ${runId} not found.`);
-    if (state.status !== "waiting_for_approval" || !state.pending || state.pending.approvalId !== continuation.approvalId) {
-      throw new LouError("CONFLICT", "This run is not waiting for that approval.");
-    }
-    const pending = state.pending;
-    state.status = "resuming";
-    state.pending = null;
-    await this.deps.runs.save(state);
-    this.deps.progress.progress(state);
-
-    return this.drive(state, async (signal) => {
+    const { state, pending } = await beginResume(this.deps.runs, this.deps.progress, runId, continuation.approvalId);
+    return this.driver.drive(state, async (signal) => {
       if (continuation.decision !== "approved") {
         const reason = continuation.decision === "expired" ? "The approval expired." : "The user cancelled this action.";
         this.pushToolMessage(state, pending.modelCallId, pending.toolId, undefined, {
@@ -114,30 +114,13 @@ export class CustomLunaRuntime implements AgentRuntime {
           });
         }
         state.queue = [];
-        state.finalMessage = continuation.decision === "expired" ? "That approval expired, so nothing was done." : "Okay, I cancelled that.";
+        state.finalMessage = rejectionMessage(continuation.decision);
         return "completed";
       }
 
       this.deps.progress.progress(state, this.deps.registry.get(pending.toolId)?.title);
-      const outcome = await this.deps.executor.invoke({
-        toolId: pending.toolId,
-        rawInput: continuation.input,
-        caller: "model",
-        userId: state.userId,
-        runId: state.runId,
-        originDeviceId: state.originDeviceId,
-        exposedToolIds: new Set(state.exposedTools),
-        tainted: state.tainted,
-        grant: { approvalId: continuation.approvalId, toolId: pending.toolId, inputHash: continuation.inputHash },
-        signal,
-      });
-      if (outcome.kind === "approval_required") {
-        // A grant that matches policy never needs approval again; treat as an integrity failure.
-        throw new LouError("APPROVAL_MISMATCH", "The approved action could not be executed as approved.");
-      }
-      const result: Result<unknown> = outcome.kind === "denied" ? { success: false, error: outcome.error } : outcome.result;
-      if (result.success) state.actionsTaken++;
-      this.pushToolMessage(state, pending.modelCallId, pending.toolId, outcome.definition, result);
+      const { definition, result } = await executeApproved(this.deps.executor, state, pending, continuation, signal);
+      this.pushToolMessage(state, pending.modelCallId, pending.toolId, definition, result);
       await this.deps.runs.save(state);
 
       const queued = await this.processQueue(state, signal);
@@ -147,53 +130,10 @@ export class CustomLunaRuntime implements AgentRuntime {
   }
 
   async cancel(runId: string): Promise<void> {
-    const controller = this.active.get(runId);
-    if (controller) {
-      controller.abort();
-      return;
-    }
-    const state = await this.deps.runs.load(runId);
-    if (!state || ["completed", "failed", "cancelled"].includes(state.status)) return;
-    state.status = "cancelled";
-    state.pending = null;
-    state.finalMessage = "Cancelled.";
-    await this.deps.runs.save(state);
-    this.deps.progress.completed(state);
+    return this.driver.cancel(runId);
   }
 
   // -------------------------------------------------------------------------
-
-  private async drive(state: RunState, body: (signal: AbortSignal) => Promise<LoopOutcome>): Promise<AgentRunResult> {
-    if (this.active.has(state.runId)) throw new LouError("CONFLICT", "This run is already executing.");
-    const controller = new AbortController();
-    this.active.set(state.runId, controller);
-    try {
-      const outcome = await body(controller.signal);
-      if (outcome === "completed") {
-        state.status = "completed";
-        state.finalMessage = state.finalMessage?.trim() || "Done.";
-      }
-    } catch (e) {
-      const error = toLouError(e);
-      state.status = error.code === "CANCELLED" ? "cancelled" : "failed";
-      state.error = error.code === "CANCELLED" ? null : error.toJSON();
-      state.finalMessage = error.code === "CANCELLED" ? "Cancelled." : null;
-      state.pending = null;
-      this.deps.logger?.[error.code === "CANCELLED" ? "info" : "error"]({ runId: state.runId, code: error.code, err: error.message }, "agent run ended early");
-    } finally {
-      this.active.delete(state.runId);
-    }
-    await this.deps.runs.save(state);
-    if (state.status === "waiting_for_approval") this.deps.progress.progress(state);
-    else this.deps.progress.completed(state);
-    return {
-      runId: state.runId,
-      status: state.status,
-      finalMessage: state.finalMessage,
-      approvalId: state.pending?.approvalId ?? null,
-      error: state.error,
-    };
-  }
 
   private async loop(state: RunState, signal: AbortSignal): Promise<LoopOutcome> {
     while (true) {
