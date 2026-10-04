@@ -21,6 +21,14 @@ state.launches.push(argv);
 save(state);
 
 const disabledMcp = new Set(argv.flatMap((a, i) => (argv[i - 1] === "-c" && /^mcp_servers\.(.+)\.enabled=false$/.test(a) ? [a.match(/^mcp_servers\.(.+)\.enabled=false$/)[1]] : [])));
+const disabledFeatures = new Set(argv.flatMap((a, i) => (argv[i - 1] === "--disable" ? [a] : [])));
+// Like the real CLI: disabling a built-in server by name breaks config loading.
+for (const s of script.mcpServers ?? []) {
+  if (s.builtinFeature && disabledMcp.has(s.name)) {
+    process.stderr.write("Error: invalid transport in mcp_servers." + s.name + "\n");
+    process.exit(1);
+  }
+}
 const loaded = new Set();
 let nextServerReqId = 1000;
 const serverPending = new Map();
@@ -76,7 +84,8 @@ async function onMessage(msg) {
     case "experimentalFeature/list":
       return ok({ data: (script.features ?? ["shell_tool", "unified_exec", "view_image", "apps", "plugins", "computer_use"]).map((name) => ({ name, enabled: true })) });
     case "mcpServerStatus/list":
-      return ok({ data: (script.mcpServers ?? []).map((s) => ({ name: s.name, tools: disabledMcp.has(s.name) ? {} : Object.fromEntries(Array.from({ length: s.tools }, (_, k) => [`t${k}`, {}])) })) });
+      // Built-in servers (e.g. the apps runtime) vanish when their feature is disabled.
+      return ok({ data: (script.mcpServers ?? []).filter((s) => !s.builtinFeature || !disabledFeatures.has(s.builtinFeature)).map((s) => ({ name: s.name, tools: disabledMcp.has(s.name) ? {} : Object.fromEntries(Array.from({ length: s.tools }, (_, k) => [`t${k}`, {}])) })) });
     case "thread/start": {
       const s = load();
       const id = `thread_${Object.keys(s.threads).length + 1}_${Date.now() % 100000}`;

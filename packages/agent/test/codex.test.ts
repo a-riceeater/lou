@@ -23,7 +23,7 @@ afterEach(async () => {
 interface MockScript {
   auth?: "chatgpt" | "none";
   features?: string[];
-  mcpServers?: Array<{ name: string; tools: number }>;
+  mcpServers?: Array<{ name: string; tools: number; builtinFeature?: string }>;
   turns?: unknown[][];
 }
 
@@ -111,18 +111,28 @@ describe("codex app server lifecycle", () => {
   });
 
   it("starts, initializes, and relaunches locked down (features and MCP servers disabled)", async () => {
-    const { manager, mock } = setup({ features: ["shell_tool", "unified_exec", "apps", "made_up_feature"], mcpServers: [{ name: "node_repl", tools: 3 }] });
+    const { manager, mock } = setup({
+      features: ["shell_tool", "unified_exec", "apps", "made_up_feature"],
+      mcpServers: [
+        { name: "node_repl", tools: 3 },
+        { name: "codex_apps", tools: 40, builtinFeature: "apps" },
+      ],
+    });
     const health = await manager.health();
     expect(health).toMatchObject({ state: "ready", installed: true, signedIn: true, auth: { mode: "chatgpt", plan: "plus" }, cliVersion: "9.9.9-mock", restricted: true });
     expect(JSON.stringify(health)).not.toContain("user@example.com");
 
     const { launches, requests } = mock();
-    expect(launches).toHaveLength(2);
-    const locked = launches[1]!;
+    // probe → feature-locked → feature-locked + user MCP servers disabled
+    expect(launches).toHaveLength(3);
+    expect(launches[1]!.join(" ")).not.toContain("mcp_servers");
+    const locked = launches[2]!;
     expect(locked.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
     for (const f of ["shell_tool", "unified_exec", "apps"]) expect(locked.join(" ")).toContain(`--disable ${f}`);
     expect(locked.join(" ")).not.toContain("made_up_feature");
     expect(locked).toContain("mcp_servers.node_repl.enabled=false");
+    // Built-in servers go away with their feature and must not be disabled by name.
+    expect(locked.join(" ")).not.toContain("codex_apps");
     expect(locked).toContain("project_doc_max_bytes=0");
     expect(locked.join(" ")).not.toMatch(/danger|bypass|yolo/);
     const methods = requests.map((r) => r.method);
