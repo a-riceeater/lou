@@ -1,4 +1,4 @@
-import { Bm25Index, LouError, toLouError, wrapUntrusted, type Result, type SerializedError } from "@lou/shared";
+import { LouError, toLouError, type Result } from "@lou/shared";
 import {
   selectFamilies,
   type AnyToolDefinition,
@@ -9,10 +9,10 @@ import {
 } from "@lou/tools";
 import type { ModelMessage, ModelRouter, ModelToolCall } from "./model";
 import { formatContext, SYSTEM_PROMPT } from "./prompts";
+import { ENABLE_FAMILY_TOOL, familyTools, formatToolResult, recordToolOutcome } from "./shared";
 import type { AgentContinuation, AgentInput, AgentRunResult, AgentRuntime, ContextProvider, ProgressSink, RunState, RunStore } from "./types";
 
-export const ENABLE_FAMILY_TOOL = "tools.enable_family";
-export const SKILL_READ_TOOL = "skills.read";
+export { ENABLE_FAMILY_TOOL, SKILL_READ_TOOL } from "./shared";
 
 export interface RuntimeLogger {
   info(obj: object, msg?: string): void;
@@ -277,14 +277,7 @@ export class CustomLunaRuntime implements AgentRuntime {
       }
 
       const result: Result<unknown> = outcome.kind === "denied" ? { success: false, error: outcome.error } : outcome.result;
-      if (result.success) {
-        state.consecutiveFailures = 0;
-        if (outcome.definition && outcome.definition.risk !== "read") state.actionsTaken++;
-        if (outcome.definition?.untrustedOutput) state.tainted = true;
-        if (call.name === SKILL_READ_TOOL) this.onSkillLoaded(state, result.data);
-      } else {
-        state.consecutiveFailures++;
-      }
+      this.offer(state, recordToolOutcome(state, call.name, outcome.definition, result));
       this.pushToolMessage(state, call.id, call.name, outcome.definition, result);
       // Persist after every external tool call (AGENT_SYSTEM.md §14).
       await this.deps.runs.save(state);
@@ -326,25 +319,15 @@ export class CustomLunaRuntime implements AgentRuntime {
     return { success: true, data: { enabled: added } };
   }
 
-  /** Model-exposed tools of a family; large families are narrowed to the most relevant tools. */
   private familyTools(familyId: string, text: string): string[] {
-    const defs = this.deps.registry.byFamily(familyId).filter((d) => d.exposure === "model");
-    const max = this.deps.families().find((f) => f.id === familyId)?.maxTools;
-    if (!max || defs.length <= max) return defs.map((d) => d.id);
-    const index = new Bm25Index(defs.map((d) => ({ id: d.id, text: `${d.id.replace(/[._]/g, " ")} ${d.description}` })));
-    const ranked = index.search(text, max).map((h) => h.id);
-    return ranked.length ? ranked : defs.slice(0, max).map((d) => d.id);
+    return familyTools(this.deps.registry, this.deps.families(), familyId, text);
   }
 
-  private onSkillLoaded(state: RunState, data: unknown): void {
-    const skill = data as { id?: unknown; tools?: unknown };
-    if (typeof skill?.id === "string" && !state.loadedSkills.includes(skill.id)) state.loadedSkills.push(skill.id);
-    if (Array.isArray(skill?.tools)) {
-      for (const toolId of skill.tools) {
-        const def = typeof toolId === "string" ? this.deps.registry.get(toolId) : undefined;
-        // Skills only change which tools are *offered*; policy still governs execution.
-        if (def && def.exposure === "model" && !state.exposedTools.includes(def.id)) state.exposedTools.push(def.id);
-      }
+  /** Skills only change which tools are *offered*; policy still governs execution. */
+  private offer(state: RunState, toolIds: string[]): void {
+    for (const toolId of toolIds) {
+      const def = this.deps.registry.get(toolId);
+      if (def && def.exposure === "model" && !state.exposedTools.includes(def.id)) state.exposedTools.push(def.id);
     }
   }
 
@@ -353,11 +336,6 @@ export class CustomLunaRuntime implements AgentRuntime {
   }
 
   private formatResult(def: AnyToolDefinition | undefined, result: Result<unknown>): string {
-    const body = result.success
-      ? { success: true, data: result.data }
-      : { success: false, error: { code: result.error.code, message: result.error.message, retryable: result.error.retryable } satisfies Omit<SerializedError, "details"> };
-    let json = JSON.stringify(body);
-    if (json.length > this.maxToolResultChars) json = `${json.slice(0, this.maxToolResultChars)}…[truncated]`;
-    return def?.untrustedOutput && result.success ? wrapUntrusted(def.id, json) : json;
+    return formatToolResult(def, result, this.maxToolResultChars);
   }
 }

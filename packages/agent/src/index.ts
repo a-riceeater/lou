@@ -4,5 +4,6 @@ export * from "./media";
 export * from "./types";
 export * from "./prompts";
 export * from "./runtime";
+export { familyTools, formatToolResult, recordToolOutcome, toApiName, fromApiName } from "./shared";
 export * from "./tasks";
 export * from "./testing";

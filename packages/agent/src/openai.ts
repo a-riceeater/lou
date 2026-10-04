@@ -1,5 +1,6 @@
 import { LouError } from "@lou/shared";
 import OpenAI from "openai";
+import { fromApiName, toApiName } from "./shared";
 import type { ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelToolCall } from "./model";
 
 export interface OpenAIProviderOptions {
@@ -97,13 +98,6 @@ export class OpenAIResponsesProvider implements ModelProvider {
   }
 }
 
-export function toApiName(name: string): string {
-  return name.replace(/\./g, "__").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
-}
-
-export function fromApiName(name: string): string {
-  return name.replace(/__/g, ".");
-}
 
 function toInput(messages: ModelMessage[]): unknown[] {
   const items: unknown[] = [];
