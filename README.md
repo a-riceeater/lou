@@ -1,4 +1,4 @@
-# Lou
+# Lou - A Life Operations Utility
 
 A personal, multi-device AI assistant: a central server (the brain) and a native Windows client (the hands and the face). Press <kbd>Alt</kbd>+<kbd>Space</kbd>, ask for something, review what Lou proposes, and approve it. Nothing consequential happens without your approval.
 
