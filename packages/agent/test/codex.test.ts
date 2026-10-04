@@ -25,6 +25,8 @@ interface MockScript {
   features?: string[];
   mcpServers?: Array<{ name: string; tools: number; builtinFeature?: string }>;
   turns?: unknown[][];
+  noAppServer?: boolean;
+  execText?: string;
 }
 
 function setup(script: MockScript, options: { explicitPath?: string; dir?: string } = {}) {
@@ -327,3 +329,34 @@ function safeMock<T>(mock: () => T): T | { requests: [] } {
   }
 }
 
+
+describe("codex exec compatibility fallback", () => {
+  it("uses structured `codex exec --json` for single-shot tasks when App Server is unavailable", async () => {
+    const { manager, mock } = setup({ noAppServer: true, execText: '{"body":"Thanks, see you at 6."}' });
+    const res = await new CodexModelProvider(manager).complete({
+      purpose: "draft",
+      messages: [
+        { role: "system", content: "Draft replies." },
+        { role: "user", content: "Say I'll be there at 6." },
+      ],
+      responseFormat: { name: "draft", schema: { type: "object", properties: { body: { type: "string" } }, required: ["body"] } },
+    });
+    expect(res.text).toBe('{"body":"Thanks, see you at 6."}');
+    const run = (mock() as any).execRuns[0];
+    expect(run.argv).toEqual(expect.arrayContaining(["exec", "--json", "--ephemeral", "--sandbox", "read-only", "--output-schema", "-"]));
+    expect(run.argv.join(" ")).toContain("--disable shell_tool");
+    expect(run.argv.join(" ")).not.toMatch(/danger|bypass/);
+    // The prompt goes over stdin, never on the command line.
+    expect(run.prompt).toContain("Say I'll be there at 6.");
+    expect(run.argv.join(" ")).not.toContain("Say I'll be there");
+  });
+
+  it("refuses agent runs without App Server instead of acting without Lou's tools", async () => {
+    const { manager } = setup({ noAppServer: true });
+    const result = await runtimeFor(manager).runtime.run(input("reply to sarah"));
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toMatch(/no App Server/);
+    expect(result.error?.message).toMatch(/npm install -g @openai\/codex@latest/);
+    expect((await manager.health()).state).toBe("error");
+  });
+});

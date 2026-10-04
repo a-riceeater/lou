@@ -20,6 +20,34 @@ const state = load();
 state.launches.push(argv);
 save(state);
 
+// Older CLI without App Server support.
+if (script.noAppServer && argv.includes("app-server")) {
+  process.stderr.write("error: unrecognized subcommand 'app-server'\n");
+  process.exit(2);
+}
+
+// `codex exec --json` compatibility mode: prompt on stdin, JSONL events on stdout.
+if (argv.includes("exec")) {
+  let prompt = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (c) => (prompt += c));
+  process.stdin.on("end", () => {
+    const s = load();
+    s.execRuns = [...(s.execRuns ?? []), { argv, prompt }];
+    save(s);
+    const out = (e) => process.stdout.write(JSON.stringify(e) + "\n");
+    out({ type: "thread.started", thread_id: "exec-thread" });
+    out({ type: "turn.started" });
+    if (script.execFail) out({ type: "turn.failed", error: { message: script.execFail } });
+    else {
+      out({ type: "item.completed", item: { id: "i1", type: "agent_message", text: script.execText ?? "ok" } });
+      out({ type: "turn.completed", usage: {} });
+    }
+    process.exit(0);
+  });
+}
+const EXEC_MODE = argv.includes("exec");
+
 const disabledMcp = new Set(argv.flatMap((a, i) => (argv[i - 1] === "-c" && /^mcp_servers\.(.+)\.enabled=false$/.test(a) ? [a.match(/^mcp_servers\.(.+)\.enabled=false$/)[1]] : [])));
 const disabledFeatures = new Set(argv.flatMap((a, i) => (argv[i - 1] === "--disable" ? [a] : [])));
 // Like the real CLI: disabling a built-in server by name breaks config loading.
@@ -50,7 +78,7 @@ const callServer = (method, params) =>
 
 let buf = "";
 process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
+if (!EXEC_MODE) process.stdin.on("data", (chunk) => {
   buf += chunk;
   let i;
   while ((i = buf.indexOf("\n")) >= 0) {
@@ -59,7 +87,7 @@ process.stdin.on("data", (chunk) => {
     if (line) void onMessage(JSON.parse(line));
   }
 });
-process.stdin.on("end", () => process.exit(0));
+if (!EXEC_MODE) process.stdin.on("end", () => process.exit(0));
 
 async function onMessage(msg) {
   if (msg.id !== undefined && !msg.method) {
