@@ -1,4 +1,4 @@
-import type { AgentInput, AgentRuntime, ContextProvider, ProgressSink, RunContext, RunState } from "@lou/agent";
+import type { AgentInput, AgentRuntime, ContextProvider, ProgressSink, ProviderId, RunContext, RunState } from "@lou/agent";
 import type { CreateRunRequest } from "@lou/protocol";
 import { LouError, newId } from "@lou/shared";
 import type { ApprovalDecision, ApprovalManager } from "../approvals/manager";
@@ -16,7 +16,13 @@ import type { WorkflowEngine } from "../workflows/engine";
 import type { ConversationStore } from "./conversations";
 
 export interface AgentServiceDeps {
-  runtime: () => AgentRuntime;
+  /** Runtime for a provider. Runs are resumed by the provider that started them. */
+  runtimeFor: (provider: ProviderId) => AgentRuntime;
+  /** Provider selected in settings for new runs. */
+  activeProvider: () => ProviderId;
+  providerOfRun: (runId: string) => ProviderId | undefined;
+  /** Whether another provider is usable as an explicit fallback for a failed run. */
+  fallbackFor: (provider: ProviderId) => ProviderId | undefined;
   conversations: ConversationStore;
   approvals: ApprovalManager;
   workflows: WorkflowEngine;
@@ -41,19 +47,29 @@ export class AgentService {
     if (this.deps.settings.get().agentPaused) throw new LouError("POLICY_DENIED", "The assistant is paused. Resume it in Settings.");
     const conversationId = this.deps.conversations.getOrCreate(userId, req.conversationId);
     const runId = newId("run");
+    const provider = req.provider ?? this.deps.activeProvider();
     this.deps.conversations.add(conversationId, "user", req.text, runId);
-    this.deps.audit.record({ userId, actorType: deviceId ? "device" : "user", actorId: deviceId ?? userId, action: "run.started", targetType: "run", targetId: runId, runId, details: { inputMode: req.inputMode ?? "text" } });
+    this.deps.audit.record({
+      userId,
+      actorType: deviceId ? "device" : "user",
+      actorId: deviceId ?? userId,
+      action: "run.started",
+      targetType: "run",
+      targetId: runId,
+      runId,
+      details: { inputMode: req.inputMode ?? "text", provider, providerOverride: !!req.provider },
+    });
 
     const input: AgentInput = { runId, userId, conversationId, text: req.text, source: "user", originDeviceId: deviceId };
     void this.deps
-      .runtime()
+      .runtimeFor(provider)
       .run(input)
       .catch((err) => this.deps.logger.error({ err, runId }, "agent run crashed"));
     return { runId, conversationId };
   }
 
   async cancel(userId: string, runId: string, actorDeviceId?: string): Promise<void> {
-    await this.deps.runtime().cancel(runId);
+    await this.deps.runtimeFor(this.deps.providerOfRun(runId) ?? this.deps.activeProvider()).cancel(runId);
     await this.deps.approvals.cancelForRun(runId);
     this.deps.audit.record({ userId, actorType: "device", actorId: actorDeviceId, action: "run.cancelled", targetType: "run", targetId: runId, runId });
   }
@@ -62,6 +78,7 @@ export class AgentService {
   progressSink(): ProgressSink {
     return {
       progress: (state, label) => this.deps.bus.emit("run.progress", { userId: state.userId, runId: state.runId, status: state.status, label }),
+      delta: (state, text) => this.deps.bus.emit("run.delta", { userId: state.userId, runId: state.runId, text }),
       completed: (state) => {
         if (state.finalMessage) this.deps.conversations.add(state.conversationId, "assistant", state.finalMessage, state.runId);
         this.deps.audit.record({
@@ -71,9 +88,12 @@ export class AgentService {
           targetType: "run",
           targetId: state.runId,
           runId: state.runId,
-          details: { model: state.model, steps: state.step, skills: state.loadedSkills, actionsTaken: state.actionsTaken, error: state.error?.code },
+          details: { provider: state.provider, model: state.model, steps: state.step, skills: state.loadedSkills, actionsTaken: state.actionsTaken, error: state.error?.code },
         });
-        this.deps.bus.emit("run.completed", { userId: state.userId, runId: state.runId, status: state.status, message: state.finalMessage, error: state.error });
+        // Never switch providers silently: offer the alternative explicitly when one is usable.
+        const fallback = state.status === "failed" && state.provider ? this.deps.fallbackFor(state.provider) : undefined;
+        const error = state.error && fallback ? { ...state.error, details: { ...(state.error.details ?? {}), provider: state.provider, fallbackProvider: fallback } } : state.error;
+        this.deps.bus.emit("run.completed", { userId: state.userId, runId: state.runId, status: state.status, message: state.finalMessage, error });
         this.deps.onRunCompleted?.(state);
       },
     };
@@ -91,7 +111,7 @@ export class AgentService {
         : { type: "approval" as const, approvalId: d.approvalId, decision: d.decision };
     // Resume asynchronously: the HTTP request returns immediately; progress streams over WebSocket.
     void this.deps
-      .runtime()
+      .runtimeFor(this.deps.providerOfRun(d.runId) ?? this.deps.activeProvider())
       .resume(d.runId, continuation)
       .catch((err) => this.deps.logger.error({ err, runId: d.runId }, "agent resume failed"));
   }

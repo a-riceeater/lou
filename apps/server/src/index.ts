@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   process.on("unhandledRejection", (err) => logger.error({ err }, "unhandled rejection"));
 
   await app.listen({ host: config.host, port: config.port });
-  logger.info({ url: config.publicUrl, model: services.model ? config.openai.model : null, db: config.dbPath }, "lou server ready");
+  logger.info({ url: config.publicUrl, provider: services.providers.active(), model: services.providers.modelLabel(), db: config.dbPath }, "lou server ready");
 }
 
 main().catch((err) => {

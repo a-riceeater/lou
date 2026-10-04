@@ -61,6 +61,7 @@ export class DeviceGateway {
     private readonly logger: Logger,
   ) {
     bus.on("run.progress", (e) => this.broadcast(e.userId, "agent.progress", { runId: e.runId, status: e.status, label: e.label }, e.runId));
+    bus.on("run.delta", (e) => this.broadcast(e.userId, "agent.delta", { runId: e.runId, text: e.text }, e.runId));
     bus.on("run.completed", (e) =>
       this.broadcast(e.userId, "agent.completed", { runId: e.runId, status: e.status, message: e.message, error: e.error }, e.runId),
     );

@@ -9,6 +9,7 @@ import type { Logger } from "../logger";
  */
 export interface BusEvents {
   "run.progress": { userId: string; runId: string; status: RunStatus; label?: string };
+  "run.delta": { userId: string; runId: string; text: string };
   "run.completed": { userId: string; runId: string; status: RunStatus; message: string | null; error: SerializedError | null };
   "approval.requested": { userId: string; approval: ApprovalView };
   "approval.resolved": { userId: string; approvalId: string; status: string; runId: string | null };

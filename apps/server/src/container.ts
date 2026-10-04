@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CodexAgentRuntime,
+  CodexAppServerManager,
+  CodexModelProvider,
   CustomLunaRuntime,
   ModelRouter,
   OpenAIEmbeddings,
@@ -9,6 +12,7 @@ import {
   type AgentRuntime,
   type EmbeddingProvider,
   type ModelProvider,
+  type ProviderId,
   type Transcriber,
 } from "@lou/agent";
 import { newId } from "@lou/shared";
@@ -16,6 +20,8 @@ import { BUILTIN_FAMILIES, ToolExecutor, ToolPolicyEngine, ToolRegistry } from "
 import { eq } from "drizzle-orm";
 import { ConversationStore } from "./agent/conversations";
 import { registerInternalTools } from "./agent/internalTools";
+import { DbCodexThreadStore } from "./agent/providerThreads";
+import { ModelProviders } from "./agent/providers";
 import { ToolCallRecorder } from "./agent/recorder";
 import { DbRunStore } from "./agent/runStore";
 import { AgentService, ServerContextProvider } from "./agent/service";
@@ -51,6 +57,8 @@ export interface ServiceOverrides {
   embeddings?: EmbeddingProvider | null;
   transcriber?: Transcriber | null;
   db?: Db;
+  /** Codex App Server overrides (tests point this at a mock app server). */
+  codex?: { explicitPath?: string; env?: NodeJS.ProcessEnv };
 }
 
 export interface Services {
@@ -69,7 +77,10 @@ export interface Services {
   approvals: ApprovalManager;
   conversations: ConversationStore;
   runs: DbRunStore;
-  runtime: AgentRuntime;
+  /** Runtime for a provider (each run is resumed by the provider that started it). */
+  runtimeFor(provider: ProviderId): AgentRuntime;
+  providers: ModelProviders;
+  codex: CodexAppServerManager;
   agent: AgentService;
   memory: MemoryStore;
   skills: SkillRegistry;
@@ -83,7 +94,10 @@ export interface Services {
   improvement?: ImprovementEvaluator;
   gmailPoller: GmailPoller;
   transcriber?: Transcriber;
-  model?: ModelProvider;
+  /** Single-shot model access following the selected provider. */
+  model: ModelProvider;
+  /** OpenAI API provider, when configured. */
+  apiModel?: ModelProvider;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -106,12 +120,12 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   const fetchImpl = overrides.fetch ?? fetch;
   const bus = new EventBus(logger);
   const audit = new AuditLog(db);
-  const settings = new SettingsStore(db, audit);
+  const settings = new SettingsStore(db, audit, { aiProvider: config.aiProvider });
   const users = new UserStore(db);
   const owner = users.ensureOwner(config.user);
 
   const openaiOptions = config.openai.apiKey ? { apiKey: config.openai.apiKey, baseURL: config.openai.baseURL, organization: config.openai.organization } : undefined;
-  const model: ModelProvider | undefined =
+  const apiModel: ModelProvider | undefined =
     overrides.model ??
     (openaiOptions
       ? new OpenAIResponsesProvider({ ...openaiOptions, model: config.openai.model, purposeModels: config.openai.classifierModel ? { classify: config.openai.classifierModel } : undefined })
@@ -120,6 +134,20 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     openaiOptions && config.openai.escalationModel && !overrides.model
       ? { provider: new OpenAIResponsesProvider({ ...openaiOptions, model: config.openai.escalationModel }), afterToolFailures: 2 }
       : undefined;
+  const codexManager = new CodexAppServerManager({
+    explicitPath: overrides.codex?.explicitPath ?? config.codex.path,
+    env: overrides.codex?.env,
+    workspaceDir: config.codex.workspaceDir,
+    clientVersion: config.version,
+    logger,
+  });
+  const providers = new ModelProviders(
+    settings,
+    { model: apiModel, modelName: config.openai.model },
+    { manager: codexManager, model: new CodexModelProvider(codexManager, { model: config.codex.model }), modelName: config.codex.model },
+    logger,
+  );
+  const model = providers.selected;
   const embeddings = overrides.embeddings === null ? undefined : (overrides.embeddings ?? (openaiOptions ? new OpenAIEmbeddings(openaiOptions, config.openai.embeddingModel) : undefined));
   const transcriber = overrides.transcriber === null ? undefined : (overrides.transcriber ?? (openaiOptions ? new OpenAITranscriber(openaiOptions, config.openai.transcribeModel) : undefined));
 
@@ -169,12 +197,15 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   instagram.registerTools(registry);
   registerInternalTools(registry, { memory, skills, approvals: approvals_, workflows, gateway });
 
-  const improvement =
-    model && config.improvementEnabled ? new ImprovementEvaluator(db, model, registry, skills, memory, runs, settings, audit, logger) : undefined;
+  const improvement = config.improvementEnabled ? new ImprovementEvaluator(db, model, registry, skills, memory, runs, settings, audit, logger) : undefined;
 
-  let runtimeRef: AgentRuntime | undefined;
+  const runtimes = new Map<ProviderId, AgentRuntime>();
+  const runtimeFor = (provider: ProviderId) => runtimes.get(provider)!;
   const agent = new AgentService({
-    runtime: () => runtimeRef!,
+    runtimeFor,
+    activeProvider: () => providers.active(),
+    providerOfRun: (runId) => runs.providerOf(runId),
+    fallbackFor: (provider) => providers.fallbackFor(provider),
     conversations,
     approvals: approvals_,
     workflows,
@@ -190,19 +221,31 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     },
   });
 
-  const runtime: AgentRuntime = model
-    ? new CustomLunaRuntime({
-        router: new ModelRouter(model, escalation),
-        registry,
-        executor,
-        families: () => [...BUILTIN_FAMILIES, ...mcp.families()],
-        context: new ServerContextProvider(users, memory, skills, integrations, devices, gateway, conversations),
-        runs,
-        progress: agent.progressSink(),
-        logger,
-      })
-    : unconfiguredRuntime(runs, agent);
-  runtimeRef = runtime;
+  const context = new ServerContextProvider(users, memory, skills, integrations, devices, gateway, conversations);
+  const families = () => [...BUILTIN_FAMILIES, ...mcp.families()];
+  runtimes.set(
+    "openai_api",
+    apiModel
+      ? new CustomLunaRuntime({ router: new ModelRouter(apiModel, escalation), registry, executor, families, context, runs, progress: agent.progressSink(), logger })
+      : unconfiguredRuntime(runs, agent),
+  );
+  // Same registry, executor (policy + approvals), context and run store; only the reasoning backend differs.
+  runtimes.set(
+    "codex_cli",
+    new CodexAgentRuntime({
+      manager: codexManager,
+      registry,
+      executor,
+      families,
+      context,
+      runs,
+      threads: new DbCodexThreadStore(db),
+      progress: agent.progressSink(),
+      logger,
+      model: config.codex.model,
+      turnTimeoutMs: config.codex.turnTimeoutMs,
+    }),
+  );
 
   const gmailPoller = new GmailPoller(integrations, gmailClientFactory(integrations, fetchImpl), events, logger, config.google.pollSeconds * 1000, () => !settings.get().monitoringDisabled);
 
@@ -224,7 +267,9 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     approvals: approvals_,
     conversations,
     runs,
-    runtime,
+    runtimeFor,
+    providers,
+    codex: codexManager,
     agent,
     memory,
     skills,
@@ -239,6 +284,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     gmailPoller,
     transcriber,
     model,
+    apiModel,
     async start() {
       const recovered = runs.recoverInterrupted();
       if (recovered) logger.warn({ recovered }, "marked interrupted runs as failed");
@@ -249,13 +295,16 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
       if (google.configured) gmailPoller.start();
       expiryTimer = setInterval(() => void approvals_.expireStale().catch((err) => logger.warn({ err }, "approval expiry failed")), 60_000);
       expiryTimer.unref();
-      if (!model) logger.warn("OPENAI_API_KEY is not set: the agent will report that it is not configured");
+      logger.info({ provider: providers.active() }, "model provider selected");
+      if (providers.active() === "openai_api" && !apiModel) logger.warn("OPENAI_API_KEY is not set: the agent will report that it is not configured");
+      providers.warmUp();
     },
     async stop() {
       if (expiryTimer) clearInterval(expiryTimer);
       gmailPoller.stop();
       gateway.close();
       await mcp.stop();
+      await codexManager.stop();
       db.$client.close();
     },
   };

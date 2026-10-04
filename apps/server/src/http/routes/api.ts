@@ -25,7 +25,7 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
   app.get("/api/me", async (request): Promise<MeResponse> => {
     const d = requireDevice(request);
     const user = s.users.get(d.userId);
-    return { userId: d.userId, name: user?.name ?? "", deviceId: d.deviceId, serverVersion: s.config.version, model: s.model ? s.config.openai.model : "not configured" };
+    return { userId: d.userId, name: user?.name ?? "", deviceId: d.deviceId, serverVersion: s.config.version, model: s.providers.modelLabel() };
   });
 
   // ---- Runs & history -------------------------------------------------------
@@ -246,6 +246,12 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
   });
 
   app.get("/api/settings", async () => s.settings.get());
+
+  // ---- Model providers ------------------------------------------------------------------
+  app.get("/api/providers", async (request) => {
+    const { probe } = z.object({ probe: z.enum(["1", "true"]).optional() }).parse(request.query);
+    return { active: s.providers.active(), items: await s.providers.statuses(!!probe) };
+  });
 
   app.patch("/api/settings", async (request) => {
     const d = requireDevice(request);

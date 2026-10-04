@@ -12,6 +12,7 @@ const DEFAULTS: SettingsView = {
   monitoringDisabled: false,
   agentPaused: false,
   autoActivateLowRiskSkills: false,
+  aiProvider: "openai_api",
 };
 
 export const NotificationRuleSchema = z.object({
@@ -33,12 +34,14 @@ export class SettingsStore {
   constructor(
     private readonly db: Db,
     private readonly audit: AuditLog,
+    /** Defaults from configuration (e.g. AI_PROVIDER) for values never changed in the UI. */
+    private readonly defaults: Partial<SettingsView> = {},
   ) {}
 
   get(): SettingsView {
     if (this.cache) return this.cache;
     const row = this.db.select().from(settings).where(eq(settings.key, "controls")).get();
-    this.cache = { ...DEFAULTS, ...((row?.value as Partial<SettingsView>) ?? {}) };
+    this.cache = { ...DEFAULTS, ...this.defaults, ...((row?.value as Partial<SettingsView>) ?? {}) };
     return this.cache;
   }
 
@@ -48,7 +51,8 @@ export class SettingsStore {
   }
 
   update(patch: UpdateSettingsRequest, actor: { userId: string; deviceId?: string }): SettingsView {
-    const next = { ...this.get(), ...patch };
+    const previous = this.get();
+    const next = { ...previous, ...patch };
     this.write("controls", next);
     this.cache = next;
     this.audit.record({
@@ -59,7 +63,15 @@ export class SettingsStore {
       targetType: "settings",
       details: patch,
     });
+    for (const listener of this.listeners) listener(next, previous);
     return next;
+  }
+
+  private readonly listeners = new Set<(next: SettingsView, previous: SettingsView) => void>();
+
+  onChange(listener: (next: SettingsView, previous: SettingsView) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   notificationRules(): NotificationRule[] {

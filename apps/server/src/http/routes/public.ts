@@ -18,7 +18,9 @@ export async function publicRoutes(app: FastifyInstance, s: Services): Promise<v
       version: s.config.version,
       uptimeSeconds: Math.round(process.uptime()),
       db,
-      model: s.model ? s.config.openai.model : null,
+      provider: s.providers.active(),
+      model: s.providers.modelLabel(),
+      codex: s.codex.snapshot().state,
       integrations: { gmail: s.google.configured, instagram: s.instagram.configured },
     };
   });

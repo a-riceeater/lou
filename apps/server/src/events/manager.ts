@@ -101,16 +101,21 @@ export class EventManager {
 
     if (!decision && this.classifier && input.trust === "external-untrusted") {
       const rules = (await this.memory.search(input.userId, `${n.from} ${n.subject}`, 6, ["notification_rule", "contact", "preference"])).map((m) => m.content);
-      classification = await classifyImportance(this.classifier, { source: input.source, title: `${n.from} — ${n.subject}`, content: n.content, rules });
-      decision =
-        classification.needsResponse && classification.importance >= PROPOSE_THRESHOLD
+      classification = await classifyImportance(this.classifier, { source: input.source, title: `${n.from} — ${n.subject}`, content: n.content, rules }).catch((err) => {
+        // Model unavailable (not configured, not signed in, offline): keep the event, don't guess.
+        this.logger.warn({ err: (err as Error).message, eventId }, "importance classification unavailable");
+        return undefined;
+      });
+      decision = !classification
+        ? "log"
+        : classification.needsResponse && classification.importance >= PROPOSE_THRESHOLD
           ? "propose"
           : classification.importance >= NOTIFY_THRESHOLD
             ? "notify"
             : classification.importance >= 0.3
               ? "log"
               : "ignore";
-      reason = classification.reasonCode;
+      reason = classification?.reasonCode ?? "classifier_unavailable";
     }
     decision ??= "log";
 
