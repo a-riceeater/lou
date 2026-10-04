@@ -43,9 +43,16 @@ public sealed class LocalPolicy
             return false;
         }
         if (full.StartsWith(@"\\", StringComparison.Ordinal)) return false; // no UNC / device paths
-        var hidden = full.Split(Path.DirectorySeparatorChar).Any(p => p.Equals("AppData", StringComparison.OrdinalIgnoreCase) || p.StartsWith('.'));
-        if (hidden) return false;
-        return AllowedRoots.Any(root => full.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        foreach (var root in AllowedRoots)
+        {
+            var prefix = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            // Within the root, skip app data and dot-folders (.ssh, .aws, .config …).
+            var inside = full[prefix.Length..].Split(Path.DirectorySeparatorChar);
+            if (inside.Any(p => p.Equals("AppData", StringComparison.OrdinalIgnoreCase) || p.StartsWith('.'))) return false;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>Commands that need confirmation from the person at this computer.</summary>
