@@ -11,6 +11,8 @@ export interface OpenAIProviderOptions {
   purposeModels?: Partial<Record<ModelRequest["purpose"], string>>;
   maxRetries?: number;
   timeoutMs?: number;
+  /** Custom fetch (tests, proxies). */
+  fetch?: typeof fetch;
 }
 
 /**
@@ -33,6 +35,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
       organization: options.organization,
       maxRetries: options.maxRetries ?? 2,
       timeout: options.timeoutMs ?? 90_000,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
     });
   }
 
