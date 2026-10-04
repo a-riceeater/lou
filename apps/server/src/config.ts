@@ -46,6 +46,16 @@ const EnvSchema = z.object({
   /** Path to a JSON file describing MCP servers (see docs/INTEGRATIONS.md). */
   LOU_MCP_CONFIG: z.string().optional(),
   LOU_IMPROVEMENT_ENABLED: bool.default(true),
+
+  /** Which model backend drives the assistant: the OpenAI API (API key) or the local Codex CLI (ChatGPT/Codex login). */
+  AI_PROVIDER: z.enum(["openai_api", "codex_cli"]).default("openai_api"),
+  /** Path to the codex executable (default: found on PATH). */
+  CODEX_PATH: z.string().optional(),
+  /** Model for Codex threads (default: the model configured in Codex). */
+  LOU_CODEX_MODEL: z.string().optional(),
+  /** Empty working directory given to Codex threads. */
+  LOU_CODEX_WORKSPACE: z.string().optional(),
+  LOU_CODEX_TURN_TIMEOUT_SECONDS: z.coerce.number().int().min(10).default(300),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -77,6 +87,8 @@ export interface Config {
   instagram: { appId?: string; appSecret?: string; verifyToken?: string };
   mcpConfigPath?: string;
   improvementEnabled: boolean;
+  aiProvider: "openai_api" | "codex_cli";
+  codex: { path?: string; model?: string; workspaceDir: string; turnTimeoutMs: number };
   version: string;
 }
 
@@ -132,6 +144,13 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     instagram: { appId: e.INSTAGRAM_APP_ID, appSecret: e.INSTAGRAM_APP_SECRET, verifyToken: e.INSTAGRAM_WEBHOOK_VERIFY_TOKEN },
     mcpConfigPath: e.LOU_MCP_CONFIG ? resolve(e.LOU_MCP_CONFIG) : undefined,
     improvementEnabled: e.LOU_IMPROVEMENT_ENABLED,
+    aiProvider: e.AI_PROVIDER,
+    codex: {
+      path: e.CODEX_PATH,
+      model: e.LOU_CODEX_MODEL,
+      workspaceDir: resolve(e.LOU_CODEX_WORKSPACE ?? `${dataDir}/codex-workspace`),
+      turnTimeoutMs: e.LOU_CODEX_TURN_TIMEOUT_SECONDS * 1000,
+    },
     version: "0.1.0",
   };
 }

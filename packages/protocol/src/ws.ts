@@ -93,6 +93,9 @@ export const AgentProgressSchema = frame(
   }),
 );
 
+/** Streamed assistant text (not replayed; the final message arrives in agent.completed). */
+export const AgentDeltaSchema = frame("agent.delta", z.object({ runId: z.string(), text: z.string() }));
+
 export const AgentCompletedSchema = frame(
   "agent.completed",
   z.object({
@@ -146,6 +149,7 @@ export const ServerPongSchema = frame("pong", z.object({}).passthrough());
 export const ServerMessageSchema = z.discriminatedUnion("type", [
   SessionReadySchema,
   AgentProgressSchema,
+  AgentDeltaSchema,
   AgentCompletedSchema,
   ApprovalRequestedSchema,
   ApprovalResolvedSchema,

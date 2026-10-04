@@ -24,6 +24,7 @@ export class DbRunStore implements RunStore {
         status: state.status,
         request: state.request,
         model: state.model,
+        provider: state.provider ?? "openai_api",
         state: state as unknown as Record<string, unknown>,
       })
       .run();
@@ -56,6 +57,11 @@ export class DbRunStore implements RunStore {
   }
 
   /** Runs left mid-flight by a crash/restart are failed so they don't hang forever. */
+  providerOf(runId: string): "openai_api" | "codex_cli" | undefined {
+    const row = this.db.select({ provider: agentRuns.provider }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
+    return row?.provider as "openai_api" | "codex_cli" | undefined;
+  }
+
   recoverInterrupted(): number {
     const result = this.db
       .update(agentRuns)

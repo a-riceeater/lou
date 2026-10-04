@@ -133,6 +133,25 @@ export const messages = sqliteTable(
   (t) => [index("messages_conversation_idx").on(t.conversationId, t.createdAt)],
 );
 
+/**
+ * Provider-side conversation threads (e.g. Codex App Server thread IDs). A cache
+ * for continuity only: conversations, runs and approvals remain authoritative.
+ */
+export const providerThreads = sqliteTable(
+  "provider_threads",
+  {
+    conversationId: text("conversation_id").notNull(),
+    provider: text("provider").notNull(),
+    threadId: text("thread_id").notNull(),
+    toolset: json<string[]>("toolset").notNull().default([]),
+    notes: json<string[]>("notes").notNull().default([]),
+    wantedFamilies: json<string[]>("wanted_families").notNull().default([]),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("provider_threads_conv_provider_idx").on(t.conversationId, t.provider)],
+);
+
 export const agentRuns = sqliteTable(
   "agent_runs",
   {
@@ -144,6 +163,7 @@ export const agentRuns = sqliteTable(
     status: text("status").notNull(),
     request: text("request").notNull(),
     model: text("model").notNull(),
+    provider: text("provider").notNull().default("openai_api"),
     /** Model-visible state only (transcript, exposed tools, queue). No hidden reasoning. */
     state: json<Record<string, unknown>>("state").notNull(),
     selectedSkills: json<string[]>("selected_skills").notNull().default([]),

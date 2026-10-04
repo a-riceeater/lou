@@ -46,10 +46,15 @@ export type PairingCodeResponse = z.infer<typeof PairingCodeResponseSchema>;
 // Runs & history
 // ---------------------------------------------------------------------------
 
+export const AiProviderSchema = z.enum(["openai_api", "codex_cli"]);
+export type AiProvider = z.infer<typeof AiProviderSchema>;
+
 export const CreateRunRequestSchema = z.object({
   text: z.string().trim().min(1).max(4000),
   conversationId: z.string().optional(),
   inputMode: z.enum(["text", "voice"]).default("text"),
+  /** One-off provider override (e.g. retrying with the API after a Codex failure). Audited. */
+  provider: AiProviderSchema.optional(),
 });
 export type CreateRunRequest = z.input<typeof CreateRunRequestSchema>;
 
@@ -316,6 +321,8 @@ export const SettingsViewSchema = z.object({
   monitoringDisabled: z.boolean(),
   agentPaused: z.boolean(),
   autoActivateLowRiskSkills: z.boolean(),
+  /** Model backend for the assistant. */
+  aiProvider: AiProviderSchema,
 });
 export type SettingsView = z.infer<typeof SettingsViewSchema>;
 export const UpdateSettingsRequestSchema = SettingsViewSchema.partial();
@@ -332,3 +339,21 @@ export type MeResponse = z.infer<typeof MeResponseSchema>;
 
 export const TranscriptionResponseSchema = z.object({ text: z.string() });
 export type TranscriptionResponse = z.infer<typeof TranscriptionResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Model providers
+// ---------------------------------------------------------------------------
+
+export const ProviderStatusSchema = z.object({
+  id: AiProviderSchema,
+  label: z.string(),
+  active: z.boolean(),
+  /** ready | not_configured | not_installed | not_signed_in | starting | crashed | error | stopped */
+  state: z.string(),
+  /** Short user-facing status, e.g. "Connected", "Not signed in". */
+  summary: z.string(),
+  /** Actionable hint, e.g. "Run: codex login". */
+  hint: z.string().nullable(),
+  details: z.record(z.string(), z.string()),
+});
+export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
