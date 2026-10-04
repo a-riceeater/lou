@@ -70,7 +70,7 @@ export function Accounts() {
                 <div className="row-lead">
                   <span className={`dot ${st.dot}`} />
                   <div>
-                    <div className="row-title">{a.address ?? a.displayName}</div>
+                    <div className="row-title">{a.provider === "mcp" ? a.displayName : (a.address ?? a.displayName)}</div>
                     <div className="row-sub">
                       {PROVIDER[a.provider]} — {st.text}
                       {a.lastCheckedAt ? `, checked ${relativeTime(a.lastCheckedAt)}` : ""}

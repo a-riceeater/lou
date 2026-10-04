@@ -155,9 +155,12 @@
 .editable:hover {
   background: var(--fill);
 }
-.editable:focus {
+.editable:focus,
+.editable:focus-visible {
+  outline: none;
   background: var(--raised);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  /* A quiet ring: the draft is the content, not a form field. */
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--iris) 40%, transparent);
 }
 input.editable {
   min-height: 0;
