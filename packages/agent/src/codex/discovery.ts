@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 /**
@@ -38,11 +39,15 @@ export function findCodexExecutable(options: DiscoveryOptions = {}): CodexComman
   const nodePath = options.nodePath ?? process.execPath;
 
   const candidates: string[] = [];
-  if (options.explicitPath) candidates.push(resolve(options.explicitPath));
+  if (options.explicitPath) candidates.push(expandPath(options.explicitPath, env));
   else {
     const names = platform === "win32" ? ["codex.exe", "codex.cmd", "codex.ps1", "codex"] : ["codex"];
     const pathVar = env.PATH ?? env.Path ?? "";
-    for (const dir of pathVar.split(platform === "win32" ? ";" : delimiter).filter(Boolean)) {
+    const dirs = pathVar.split(platform === "win32" ? ";" : delimiter).filter(Boolean);
+    // Services (systemd, cron) get a minimal PATH without the user's ~/.local/bin, where the codex installer puts it.
+    const home = env.HOME ?? homedir();
+    if (platform !== "win32" && home) dirs.push(join(home, ".local", "bin"));
+    for (const dir of dirs) {
       for (const name of names) candidates.push(join(dir.replace(/^"|"$/g, ""), name));
     }
   }
@@ -53,6 +58,32 @@ export function findCodexExecutable(options: DiscoveryOptions = {}): CodexComman
     if (command) return command;
   }
   return undefined;
+}
+
+/** Resolves a configured path, expanding a leading `~` (shells do this, .env files don't). */
+function expandPath(path: string, env: NodeJS.ProcessEnv): string {
+  const trimmed = path.trim().replace(/^(["'])(.*)\1$/, "$2");
+  if (trimmed === "~" || /^~[\\/]/.test(trimmed)) return join(env.HOME ?? env.USERPROFILE ?? homedir(), trimmed.slice(1));
+  return resolve(trimmed);
+}
+
+/** Explains why codex wasn't found, so a misconfigured CODEX_PATH is diagnosable from the status screen. */
+export function describeMissingCodex(explicitPath: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
+  if (!explicitPath) return "Codex executable not found on PATH (set CODEX_PATH to its full path)";
+  const path = expandPath(explicitPath, env);
+  let user = "this user";
+  try {
+    user = `user ${userInfo().username}`;
+  } catch {}
+  try {
+    if (statSync(path).isDirectory()) return `CODEX_PATH ${path} is a directory; point it at the codex executable itself`;
+    return `CODEX_PATH ${path} can't be launched by ${user}`;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EACCES") return `CODEX_PATH ${path} isn't readable by ${user}; the server must run as a user that can reach it`;
+    const hidden = /^\/(home|root|run\/user)\//.test(path) ? " (under systemd, ProtectHome=true hides /home and /root from the service)" : "";
+    return `CODEX_PATH ${path} doesn't exist as seen by the server${hidden}`;
+  }
 }
 
 function toCommand(path: string, platform: NodeJS.Platform, nodePath: string): CodexCommand | undefined {

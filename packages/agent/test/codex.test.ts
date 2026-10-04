@@ -9,6 +9,7 @@ import {
   CodexAgentRuntime,
   CodexAppServerManager,
   CodexModelProvider,
+  describeMissingCodex,
   findCodexExecutable,
   type CodexThreadRecord,
 } from "../src";
@@ -86,6 +87,22 @@ describe("codex executable discovery", () => {
     expect(shim.prefixArgs[0]).toBe(join(shimDir, "node_modules", "@openai", "codex", "bin", "codex.js"));
     expect(findCodexExecutable({ explicitPath: MOCK, nodePath: "node" })).toMatchObject({ file: "node", prefixArgs: [MOCK] });
     expect(findCodexExecutable({ env: { PATH: join(root, "empty") }, platform: "win32" })).toBeUndefined();
+  });
+
+  it("expands ~ in CODEX_PATH, also searches ~/.local/bin, and explains a missing explicit path", () => {
+    const home = mkdtempSync(join(tmpdir(), "lou-home-"));
+    mkdirSync(join(home, ".local", "bin"), { recursive: true });
+    const codex = join(home, ".local", "bin", "codex");
+    writeFileSync(codex, "");
+
+    expect(findCodexExecutable({ explicitPath: "~/.local/bin/codex", env: { HOME: home }, platform: "linux" })?.file).toBe(codex);
+    expect(findCodexExecutable({ explicitPath: `"${codex}"`, env: {}, platform: "linux" })?.file).toBe(codex);
+    expect(findCodexExecutable({ env: { HOME: home, PATH: "/usr/bin" }, platform: "linux" })?.file).toBe(codex);
+
+    expect(describeMissingCodex(join(home, "missing", "codex"), { HOME: home })).toMatch(/doesn't exist as seen by the server/);
+    expect(describeMissingCodex(join(home, ".local", "bin"), { HOME: home })).toMatch(/is a directory/);
+    if (process.platform !== "win32") expect(describeMissingCodex("/home/someone/.local/bin/codex-missing")).toMatch(/ProtectHome/);
+    expect(describeMissingCodex(undefined)).toMatch(/not found on PATH/);
   });
 });
 

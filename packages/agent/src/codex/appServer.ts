@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { LouError } from "@lou/shared";
-import { findCodexExecutable, readCodexVersion, type CodexCommand } from "./discovery";
+import { describeMissingCodex, findCodexExecutable, readCodexVersion, type CodexCommand } from "./discovery";
 import {
   CODEX_APPROVAL_REQUESTS,
   type DynamicToolCallParams,
@@ -260,8 +260,9 @@ export class CodexAppServerManager {
 
     const command = this.options.command ?? findCodexExecutable({ explicitPath: this.options.explicitPath, env: this.options.env });
     if (!command) {
-      this.status = { ...this.status, state: "not_installed", installed: false, executable: null, lastError: "Codex executable not found" };
-      throw new LouError("NOT_CONFIGURED", "Codex CLI isn't installed on the server. Install it with: npm install -g @openai/codex");
+      const reason = describeMissingCodex(this.options.explicitPath, this.options.env);
+      this.status = { ...this.status, state: "not_installed", installed: false, executable: null, lastError: reason };
+      throw new LouError("NOT_CONFIGURED", this.options.explicitPath ? `Codex CLI couldn't be found: ${reason}. Install it with: npm install -g @openai/codex, or fix CODEX_PATH` : "Codex CLI isn't installed on the server. Install it with: npm install -g @openai/codex");
     }
     this.status.installed = true;
     this.status.executable = command.resolvedPath;

@@ -80,7 +80,7 @@ function codexStatus(h: CodexHealth, active: boolean, model: string | undefined)
     ready: { summary: "Connected", hint: null },
     starting: { summary: "Starting", hint: null },
     stopped: { summary: "Not running", hint: active ? null : "Select it to start Codex." },
-    not_installed: { summary: "Unavailable", hint: "Codex executable not found. Install it with: npm install -g @openai/codex" },
+    not_installed: { summary: "Unavailable", hint: `${h.lastError ?? "Codex executable not found"}. Install it with: npm install -g @openai/codex` },
     not_signed_in: { summary: "Not signed in", hint: "Run: codex login" },
     crashed: { summary: "Restarting", hint: h.lastError },
     error: { summary: "Unavailable", hint: h.lastError },
