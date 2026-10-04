@@ -77,6 +77,12 @@ input {
   user-select: text;
 }
 
+/* Thin, theme-coloured scrollbars instead of the classic Windows arrows. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink) 22%, transparent) transparent;
+}
+
 :focus-visible {
   outline: 2px solid var(--iris);
   outline-offset: 2px;

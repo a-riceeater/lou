@@ -1,5 +1,11 @@
 /* Floating command palette (DESIGN.md §2). */
 
+/* The window is sized to the panel; only the panel body scrolls, never the page. */
+html:has(.palette-root),
+html:has(.palette-root) body {
+  overflow: hidden;
+}
+
 .palette-root {
   height: 100%;
   display: flex;

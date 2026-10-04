@@ -24,6 +24,8 @@ internal sealed class PaletteWindow : Window
     public PaletteWindow()
     {
         Title = "Lou";
+        // Opened by hotkey, so programmatic focus would draw the keyboard focus rectangle around the whole page.
+        _web.UseSystemFocusVisuals = false;
         Content = new Grid { Background = new SolidColorBrush(Colors.Transparent), Children = { _web } };
         SystemBackdrop = new DesktopAcrylicBackdrop();
         var presenter = OverlappedPresenter.CreateForDialog();
@@ -57,7 +59,7 @@ internal sealed class PaletteWindow : Window
         var area = DisplayArea.GetFromPoint(new PointInt32(pt.X, pt.Y), DisplayAreaFallback.Nearest).WorkArea;
         var scale = Scale;
         var width = (int)(WidthDip * scale);
-        var height = (int)(_heightDip * scale);
+        var height = (int)Math.Ceiling(_heightDip * scale);
         AppWindow.MoveAndResize(new RectInt32(area.X + (area.Width - width) / 2, area.Y + (int)(area.Height * 0.2), width, height));
         AppWindow.Show();
         Activate();
@@ -71,7 +73,7 @@ internal sealed class PaletteWindow : Window
     {
         _heightDip = (int)Math.Clamp(heightDip, 56, 720);
         var size = AppWindow.Size;
-        AppWindow.Resize(new SizeInt32(size.Width, (int)(_heightDip * Scale)));
+        AppWindow.Resize(new SizeInt32(size.Width, (int)Math.Ceiling(_heightDip * Scale)));
     }
 
     private double Scale => GetDpiForWindow(Hwnd) / 96.0;
