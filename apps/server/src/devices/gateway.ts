@@ -51,6 +51,7 @@ export class DeviceGateway {
   private readonly buffers = new Map<string, Array<{ seq: number; frame: string }>>();
   private seq = Date.now() * 1000;
   private readonly pingTimer: ReturnType<typeof setInterval>;
+  private closing = false;
 
   constructor(
     private readonly db: Db,
@@ -118,6 +119,8 @@ export class DeviceGateway {
         this.sessions.delete(device.deviceId);
         this.failPending(device.deviceId);
       }
+      // During shutdown sessions are closed in bulk before the database closes.
+      if (this.closing) return;
       this.db
         .update(deviceSessions)
         .set({ disconnectedAt: new Date().toISOString(), closeReason: `${code} ${reason.toString()}`.trim() })
@@ -273,6 +276,10 @@ export class DeviceGateway {
 
   close(): void {
     clearInterval(this.pingTimer);
+    this.closing = true;
+    for (const session of this.sessions.values()) {
+      this.db.update(deviceSessions).set({ disconnectedAt: new Date().toISOString(), closeReason: "server shutdown" }).where(eq(deviceSessions.id, session.id)).run();
+    }
     for (const session of this.sessions.values()) session.socket.close(1001, "server shutting down");
     for (const [id, p] of this.pending) {
       clearTimeout(p.timer);
