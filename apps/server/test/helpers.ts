@@ -122,7 +122,9 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
-export async function startTestServer(options: { steps?: ScriptStep[]; dataDir?: string; masterKey?: string; google?: FakeGoogle; keepData?: boolean } = {}): Promise<TestServer> {
+export async function startTestServer(
+  options: { steps?: ScriptStep[]; dataDir?: string; masterKey?: string; google?: FakeGoogle; keepData?: boolean; env?: Record<string, string> } = {},
+): Promise<TestServer> {
   const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), "lou-test-"));
   const config = loadConfig({
     LOU_ENV: "test",
@@ -134,6 +136,7 @@ export async function startTestServer(options: { steps?: ScriptStep[]; dataDir?:
     LOU_USER_NAME: "Alex",
     LOU_TIMEZONE: "UTC",
     LOU_IMPROVEMENT_ENABLED: "false",
+    ...options.env,
   });
   const google = options.google ?? new FakeGoogle();
   const model = new ScriptedModelProvider(options.steps ?? []);
