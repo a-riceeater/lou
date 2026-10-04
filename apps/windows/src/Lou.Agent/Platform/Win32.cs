@@ -41,6 +41,11 @@ internal static partial class Win32
     }
 }
 
+public static class Foreground
+{
+    public static nint Current() => Win32.GetForegroundWindow();
+}
+
 /// <summary>Fallback foreground source when the host does not track windows.</summary>
 public sealed class CurrentForegroundWindow : IForegroundWindowSource
 {

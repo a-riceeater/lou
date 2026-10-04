@@ -20,6 +20,8 @@ internal sealed class ForegroundTracker : IForegroundWindowSource, IDisposable
     {
         _proc = OnForeground;
         _hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, 0, _proc, 0, 0, WINEVENT_OUTOFCONTEXT);
+        // Seed with whatever is in front right now.
+        OnForeground(0, 0, Lou.Agent.Platform.Foreground.Current(), 0, 0, 0, 0);
     }
 
     public nint LastExternalWindow => _last;
