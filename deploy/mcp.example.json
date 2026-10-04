@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "id": "zapier",
+      "name": "Zapier",
+      "description": "Actions in apps connected through Zapier (Slack, Notion, Sheets, …).",
+      "transport": "http",
+      "url": "${ZAPIER_MCP_URL}",
+      "keywords": ["zapier", "slack", "notion", "sheet", "spreadsheet", "trello", "todoist"],
+      "readOnlyTools": ["*_find_*", "*_search_*", "*_get_*", "*_list_*"],
+      "maxToolsPerRequest": 8
+    }
+  ]
+}
