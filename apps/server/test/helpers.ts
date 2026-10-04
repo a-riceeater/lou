@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ScriptedModelProvider, type ScriptStep } from "@lou/agent";
 import type { FastifyInstance } from "fastify";
 import { loadConfig } from "../src/config";
@@ -8,6 +9,13 @@ import { createServices, type Services } from "../src/container";
 import { buildApp } from "../src/http/app";
 import { createLogger } from "../src/logger";
 import { generateMasterKey } from "../src/security/crypto";
+
+export const MOCK_CODEX = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packages", "agent", "test", "fixtures", "mock-codex-app-server.mjs");
+
+/** Reads the mock Codex App Server's request log for a test server. */
+export function codexLog(server: TestServer): { launches: string[][]; requests: Array<{ method: string; params?: any }>; toolResults: any[] } {
+  return JSON.parse(readFileSync(join(server.dataDir, "codex-state.json"), "utf8"));
+}
 
 export interface FakeMessage {
   id: string;
@@ -123,7 +131,18 @@ export interface TestServer {
 }
 
 export async function startTestServer(
-  options: { steps?: ScriptStep[]; dataDir?: string; masterKey?: string; google?: FakeGoogle; keepData?: boolean; env?: Record<string, string> } = {},
+  options: {
+    steps?: ScriptStep[];
+    dataDir?: string;
+    masterKey?: string;
+    google?: FakeGoogle;
+    keepData?: boolean;
+    env?: Record<string, string>;
+    /** Script for the mock Codex App Server (enables the codex_cli provider backend). */
+    codexScript?: Record<string, unknown>;
+    /** Pass null to leave the OpenAI API provider unconfigured. */
+    apiModel?: null;
+  } = {},
 ): Promise<TestServer> {
   const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), "lou-test-"));
   const config = loadConfig({
@@ -140,7 +159,19 @@ export async function startTestServer(
   });
   const google = options.google ?? new FakeGoogle();
   const model = new ScriptedModelProvider(options.steps ?? []);
-  const services = createServices(config, createLogger("silent" as "fatal", false), { fetch: google.fetch as typeof fetch, model, embeddings: null, transcriber: null });
+  let codex: { explicitPath: string; env: NodeJS.ProcessEnv } | undefined;
+  if (options.codexScript) {
+    const scriptPath = join(dataDir, "codex-script.json");
+    writeFileSync(scriptPath, JSON.stringify(options.codexScript));
+    codex = { explicitPath: MOCK_CODEX, env: { ...process.env, MOCK_CODEX_SCRIPT: scriptPath, MOCK_CODEX_STATE: join(dataDir, "codex-state.json") } };
+  }
+  const services = createServices(config, createLogger("silent" as "fatal", false), {
+    fetch: google.fetch as typeof fetch,
+    model: options.apiModel === null ? undefined : model,
+    embeddings: null,
+    transcriber: null,
+    codex: codex ?? { explicitPath: join(dataDir, "no-codex", "codex.exe") },
+  });
   await services.start();
   const app = await buildApp(services);
   await app.ready();
