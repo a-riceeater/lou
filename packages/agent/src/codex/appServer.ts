@@ -266,8 +266,8 @@ export class CodexAppServerManager {
     this.status.cliVersion ??= (await readCodexVersion(command)) ?? null;
     mkdirSync(this.options.workspaceDir, { recursive: true });
 
-    // Phase 1 (first start only): discover which features and MCP servers exist,
-    // so the locked-down launch uses only names this CLI version understands.
+    // Phase 1 (first start only): discover which features this CLI version knows,
+    // so the locked-down launch only passes names it understands.
     if (!this.lockdownArgs) {
       await this.spawnProcess(command, []);
       try {
@@ -277,7 +277,7 @@ export class CodexAppServerManager {
           await this.stopProcess();
           throw new LouError("NOT_CONFIGURED", "Codex CLI isn't signed in. Run: codex login");
         }
-        this.lockdownArgs = await this.computeLockdown();
+        this.lockdownArgs = await this.computeFeatureLockdown();
       } catch (err) {
         if (this.status.state === "starting") this.status.state = "error";
         this.status.lastError = (err as Error).message;
@@ -287,11 +287,17 @@ export class CodexAppServerManager {
       }
     }
 
-    // Phase 2: the restricted process Lou actually uses.
-    await this.spawnProcess(command, this.lockdownArgs);
+    // Phase 2: the restricted process Lou actually uses. MCP servers are checked
+    // *with* features disabled: built-ins (e.g. the apps runtime) disappear then,
+    // and only user-configured servers that still expose tools are disabled by name.
     try {
-      await this.initialize();
-      if (!(await this.checkAuth())) throw new LouError("NOT_CONFIGURED", "Codex CLI isn't signed in. Run: codex login");
+      await this.spawnLocked(command);
+      const exposed = (await this.listMcpServers()).filter((s) => Object.keys(s.tools ?? {}).length > 0 && /^[A-Za-z0-9_-]+$/.test(s.name));
+      if (exposed.length) {
+        this.status.disabledMcpServers = [...new Set([...this.status.disabledMcpServers, ...exposed.map((s) => s.name)])];
+        await this.stopProcess();
+        await this.spawnLocked(command);
+      }
       await this.verifyLockdown();
     } catch (err) {
       await this.stopProcess();
@@ -373,24 +379,24 @@ export class CodexAppServerManager {
     return this.status.signedIn;
   }
 
-  private async computeLockdown(): Promise<string[]> {
+  private async computeFeatureLockdown(): Promise<string[]> {
     const args: string[] = [];
     const features = await this.rawRequest<{ data?: Array<{ name: string }> }>("experimentalFeature/list", {}, { timeoutMs: 30_000 }).catch(() => ({ data: [] }));
     const known = new Set((features.data ?? []).map((f) => f.name));
-    for (const f of LOCKDOWN_FEATURES) if (known.has(f) || !features.data?.length) args.push("--disable", f);
-    if (!features.data?.length) {
-      // Feature listing unavailable: only disable the core capabilities every version has.
-      args.length = 0;
-      for (const f of ["shell_tool", "unified_exec", "view_image"]) args.push("--disable", f);
-    }
-    const servers = await this.listMcpServers();
-    this.status.disabledMcpServers = servers.map((s) => s.name);
-    for (const s of servers) {
-      if (/^[A-Za-z0-9_-]+$/.test(s.name)) args.push("-c", `mcp_servers.${s.name}.enabled=false`);
-    }
+    // If the listing is unavailable, fall back to the core capabilities every version has.
+    const toDisable = known.size ? LOCKDOWN_FEATURES.filter((f) => known.has(f)) : ["shell_tool", "unified_exec", "view_image"];
+    for (const f of toDisable) args.push("--disable", f);
     // Keep the user's personal Codex AGENTS.md / project docs out of Lou's prompt.
     args.push("-c", "project_doc_max_bytes=0");
     return args;
+  }
+
+  /** Launches with feature lockdown plus any MCP servers known to need disabling, then initializes. */
+  private async spawnLocked(command: CodexCommand): Promise<void> {
+    const mcpArgs = this.status.disabledMcpServers.flatMap((name) => ["-c", `mcp_servers.${name}.enabled=false`]);
+    await this.spawnProcess(command, [...(this.lockdownArgs ?? []), ...mcpArgs]);
+    await this.initialize();
+    if (!(await this.checkAuth())) throw new LouError("NOT_CONFIGURED", "Codex CLI isn't signed in. Run: codex login");
   }
 
   private async listMcpServers(): Promise<McpServerStatus[]> {
