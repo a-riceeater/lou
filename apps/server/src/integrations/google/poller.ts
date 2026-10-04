@@ -11,6 +11,7 @@ import type { GmailClient } from "./gmail";
  */
 export class GmailPoller {
   private timer: ReturnType<typeof setInterval> | undefined;
+  private initial: ReturnType<typeof setTimeout> | undefined;
   private running = false;
 
   constructor(
@@ -25,11 +26,13 @@ export class GmailPoller {
   start(): void {
     this.timer = setInterval(() => void this.tick(), this.intervalMs);
     this.timer.unref();
-    setTimeout(() => void this.tick(), 5_000).unref();
+    this.initial = setTimeout(() => void this.tick(), 5_000);
+    this.initial.unref();
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    if (this.initial) clearTimeout(this.initial);
   }
 
   async tick(): Promise<void> {

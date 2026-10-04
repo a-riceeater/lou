@@ -147,12 +147,12 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
     },
     {
       async prepare(input, ctx) {
-        const prepared = await prepareReply(integrations, client, ctx.userId, input, ctx.signal);
+        const { prepared, displayName } = await prepareReplyWithName(integrations, client, ctx.userId, input, ctx.signal);
         return {
           input: prepared,
           presentation: {
             kind: "email.reply",
-            title: `Reply to ${firstName(prepared.to[0])}`,
+            title: `Reply to ${displayName}`,
             account: prepared.from,
             fields: [
               { key: "to", label: "To", value: [...prepared.to, ...prepared.cc].join(", "), kind: "recipients" },
@@ -217,6 +217,20 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
       },
     },
   );
+}
+
+/** Like prepareReply, plus a friendly first name for the approval title. */
+async function prepareReplyWithName(
+  integrations: IntegrationManager,
+  client: (id: string) => GmailClient,
+  userId: string,
+  input: z.infer<typeof ReplyInput>,
+  signal: AbortSignal,
+): Promise<{ prepared: ReplyPrepared; displayName: string }> {
+  const prepared = await prepareReply(integrations, client, userId, input, signal);
+  const original = await client(prepared.accountId).messageMeta(input.messageId, signal);
+  const fromSelf = parseAddresses(original.from)[0]?.email === prepared.from.toLowerCase();
+  return { prepared, displayName: firstName(fromSelf ? original.to : original.replyTo || original.from) };
 }
 
 /** Derives recipients, subject and threading headers deterministically from the original message. */
