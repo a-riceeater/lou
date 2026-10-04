@@ -99,6 +99,7 @@ export class CustomLunaRuntime implements AgentRuntime {
   }
 
   async resume(runId: string, continuation: AgentContinuation): Promise<AgentRunResult> {
+    await this.driver.idle(runId);
     const { state, pending } = await beginResume(this.deps.runs, this.deps.progress, runId, continuation.approvalId);
     return this.driver.drive(state, async (signal) => {
       if (continuation.decision !== "approved") {

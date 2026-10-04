@@ -72,6 +72,7 @@ export interface DriverLogger {
  */
 export class RunDriver {
   private readonly active = new Map<string, AbortController>();
+  private readonly running = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly runs: RunStore,
@@ -79,7 +80,25 @@ export class RunDriver {
     private readonly logger?: DriverLogger,
   ) {}
 
-  async drive(state: RunState, body: (signal: AbortSignal) => Promise<LoopOutcome>): Promise<AgentRunResult> {
+  /**
+   * Waits until the run is not executing. An approval can be resolved while the
+   * backend is still finishing the turn that requested it (e.g. Codex writing
+   * "ready for review"); resumption must wait for that turn to settle.
+   */
+  async idle(runId: string): Promise<void> {
+    await this.running.get(runId)?.catch(() => undefined);
+  }
+
+  drive(state: RunState, body: (signal: AbortSignal) => Promise<LoopOutcome>): Promise<AgentRunResult> {
+    const promise = this.execute(state, body);
+    this.running.set(state.runId, promise);
+    void promise.finally(() => {
+      if (this.running.get(state.runId) === promise) this.running.delete(state.runId);
+    });
+    return promise;
+  }
+
+  private async execute(state: RunState, body: (signal: AbortSignal) => Promise<LoopOutcome>): Promise<AgentRunResult> {
     if (this.active.has(state.runId)) throw new LouError("CONFLICT", "This run is already executing.");
     const controller = new AbortController();
     this.active.set(state.runId, controller);
