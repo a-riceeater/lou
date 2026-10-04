@@ -1,0 +1,295 @@
+/*
+ * Lou design tokens. Typography-led, low-noise surfaces; the window behind the
+ * WebView provides the native Mica/Acrylic material, so surfaces here are
+ * translucent tints rather than opaque paint.
+ */
+:root {
+  --ink: #1c1c1e;
+  --ink-2: #6e6e73;
+  --ink-3: #a1a1a6;
+  --surface: rgba(251, 251, 253, 0.82);
+  --surface-solid: #fbfbfd;
+  --raised: rgba(255, 255, 255, 0.72);
+  --hairline: rgba(60, 60, 67, 0.12);
+  --fill: rgba(118, 118, 128, 0.1);
+  --fill-strong: rgba(118, 118, 128, 0.18);
+  --iris: #4f5bd5;
+  --iris-ink: #ffffff;
+  --iris-soft: rgba(79, 91, 213, 0.12);
+  --ok: #30a46c;
+  --bad: #e5484d;
+  --warn: #c27c0e;
+  --shadow: 0 24px 60px -18px rgba(20, 20, 40, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", -apple-system, system-ui, sans-serif;
+  --font-text: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", -apple-system, system-ui, sans-serif;
+
+  --r-panel: 16px;
+  --r-control: 10px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f2f2f4;
+    --ink-2: #9a9aa1;
+    --ink-3: #636369;
+    --surface: rgba(30, 30, 33, 0.78);
+    --surface-solid: #1e1e21;
+    --raised: rgba(255, 255, 255, 0.06);
+    --hairline: rgba(255, 255, 255, 0.09);
+    --fill: rgba(118, 118, 128, 0.2);
+    --fill-strong: rgba(118, 118, 128, 0.3);
+    --iris: #7b84f0;
+    --iris-ink: #0e0f1f;
+    --iris-soft: rgba(123, 132, 240, 0.16);
+    --shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.7), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  color: var(--ink);
+  font: 14px/20px var(--font-text);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+textarea,
+input {
+  user-select: text;
+}
+
+:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--iris-soft);
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  color: var(--ink-2);
+  transition: background 160ms var(--ease), color 160ms var(--ease), transform 120ms var(--ease);
+}
+.btn:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn-primary {
+  background: var(--iris);
+  color: var(--iris-ink);
+}
+.btn-primary:hover {
+  background: var(--iris);
+  color: var(--iris-ink);
+  filter: brightness(1.06);
+}
+.btn-danger {
+  color: var(--bad);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.hint {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+kbd {
+  font: 11px/16px var(--font-text);
+  color: var(--ink-3);
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--fill);
+}
+
+/* ---------- Presence glyph: the one expressive element ---------- */
+
+.presence {
+  --size: 26px;
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--iris);
+}
+.presence .core {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--iris) 55%, white), var(--iris));
+  transition: transform 300ms var(--ease), opacity 200ms;
+}
+.presence .ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  opacity: 0;
+  transition: opacity 200ms;
+}
+.presence .bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  opacity: 0;
+}
+.presence .bars i {
+  width: 3px;
+  height: 6px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.presence svg {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.presence[data-phase="idle"] .core {
+  animation: breathe 3.6s var(--ease) infinite;
+}
+.presence[data-phase="thinking"] .ring,
+.presence[data-phase="tool"] .ring,
+.presence[data-phase="sending"] .ring {
+  opacity: 1;
+  border-color: var(--iris) transparent var(--iris-soft) transparent;
+  animation: orbit 0.9s linear infinite;
+}
+.presence[data-phase="thinking"] .core {
+  transform: scale(0.6);
+}
+.presence[data-phase="tool"] .core,
+.presence[data-phase="sending"] .core {
+  transform: scale(0.55);
+  animation: pulse 1.2s var(--ease) infinite;
+}
+.presence[data-phase="listening"] .core,
+.presence[data-phase="transcribing"] .core {
+  opacity: 0;
+}
+.presence[data-phase="listening"] .bars,
+.presence[data-phase="transcribing"] .bars {
+  opacity: 1;
+}
+.presence[data-phase="listening"] .bars i {
+  animation: wave 0.9s var(--ease) infinite;
+}
+.presence[data-phase="listening"] .bars i:nth-child(2) { animation-delay: 0.12s; }
+.presence[data-phase="listening"] .bars i:nth-child(3) { animation-delay: 0.24s; }
+.presence[data-phase="listening"] .bars i:nth-child(4) { animation-delay: 0.36s; }
+.presence[data-phase="transcribing"] .bars i {
+  height: 3px;
+  animation: blink 1s var(--ease) infinite;
+}
+.presence[data-phase="transcribing"] .bars i:nth-child(2) { animation-delay: 0.15s; }
+.presence[data-phase="transcribing"] .bars i:nth-child(3) { animation-delay: 0.3s; }
+.presence[data-phase="transcribing"] .bars i:nth-child(4) { animation-delay: 0.45s; }
+.presence[data-phase="approval"] .ring {
+  opacity: 1;
+  border-color: var(--iris-soft);
+}
+.presence[data-phase="approval"] .core {
+  transform: scale(0.75);
+}
+.presence[data-phase="success"] {
+  color: var(--ok);
+}
+.presence[data-phase="failure"] {
+  color: var(--bad);
+}
+.presence[data-phase="success"] .core,
+.presence[data-phase="failure"] .core {
+  opacity: 0;
+  transform: scale(0.4);
+}
+.presence[data-phase="success"] svg.check,
+.presence[data-phase="failure"] svg.alert {
+  opacity: 1;
+}
+.presence svg.check path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+}
+.presence[data-phase="success"] svg.check path {
+  animation: draw 380ms var(--ease) forwards;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(0.85); opacity: 0.8; }
+  50% { transform: scale(1); opacity: 1; }
+}
+@keyframes orbit {
+  to { transform: rotate(360deg); }
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(0.5); }
+  50% { transform: scale(0.7); }
+}
+@keyframes wave {
+  0%, 100% { height: 5px; }
+  50% { height: 18px; }
+}
+@keyframes blink {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+@keyframes draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

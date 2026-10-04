@@ -1,0 +1,189 @@
+/* Floating command palette (DESIGN.md §2). */
+
+.palette-root {
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12px 16px 28px;
+}
+
+.panel {
+  width: 100%;
+  max-width: 660px;
+  background: var(--surface);
+  backdrop-filter: blur(30px) saturate(1.6);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.prompt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 14px 18px;
+}
+
+.prompt input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: 400 20px/28px var(--font-display);
+  letter-spacing: -0.01em;
+}
+.prompt input::placeholder {
+  color: var(--ink-3);
+}
+.prompt input:focus-visible {
+  outline: none;
+}
+
+.status-line {
+  color: var(--ink-2);
+  font: 400 20px/28px var(--font-display);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-line .shimmer {
+  background: linear-gradient(90deg, var(--ink-2) 0%, var(--ink-3) 40%, var(--ink-2) 80%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: 0 0; }
+}
+
+.mic {
+  color: var(--ink-3);
+}
+.mic[aria-pressed="true"] {
+  color: var(--bad);
+  background: var(--fill);
+}
+
+.body {
+  border-top: 0.5px solid var(--hairline);
+  padding: 16px 20px 18px 56px;
+}
+
+.answer {
+  font: 400 15px/22px var(--font-text);
+  white-space: pre-wrap;
+  user-select: text;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.error-line {
+  color: var(--ink);
+}
+.error-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+  margin-left: -12px;
+}
+.error-detail {
+  margin-top: 8px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* ---------- Approval: generated content, directly editable ---------- */
+
+.approval-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.approval-title {
+  font: 600 15px/20px var(--font-display);
+}
+.approval-account {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.approval-meta {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.approval-meta dt {
+  color: var(--ink-3);
+}
+.approval-meta dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.editable {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: 400 15px/23px var(--font-text);
+  color: var(--ink);
+  padding: 10px 12px;
+  margin-left: -12px;
+  width: calc(100% + 24px);
+  border-radius: var(--r-control);
+  transition: background 160ms var(--ease);
+  min-height: 46px;
+  max-height: 300px;
+}
+.editable:hover {
+  background: var(--fill);
+}
+.editable:focus {
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+input.editable {
+  min-height: 0;
+  margin-top: 4px;
+  padding: 6px 12px;
+}
+
+.warning {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.approval-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 14px;
+}
+.approval-actions .hint {
+  margin-right: auto;
+}
+
+.footer-hint {
+  display: flex;
+  gap: 14px;
+  padding: 0 20px 12px 56px;
+}
