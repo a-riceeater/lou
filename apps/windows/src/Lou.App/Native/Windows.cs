@@ -36,6 +36,9 @@ internal sealed class PaletteWindow : Window
         AppWindow.IsShownInSwitchers = false;
         var corner = 2; // DWMWCP_ROUND
         DwmSetWindowAttribute(Hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref corner, sizeof(int));
+        // Windows 11 outlines rounded windows with a light 1px border; the acrylic panel needs none.
+        var border = DWMWA_COLOR_NONE;
+        DwmSetWindowAttribute(Hwnd, DWMWA_BORDER_COLOR, ref border, sizeof(int));
         Activated += (_, e) =>
         {
             if (e.WindowActivationState == WindowActivationState.Deactivated) Hide();

@@ -23,7 +23,8 @@ internal static partial class NativeMethods
     public const uint MF_STRING = 0x0, MF_SEPARATOR = 0x800, MF_CHECKED = 0x8;
     public const uint TPM_RETURNCMD = 0x100, TPM_RIGHTBUTTON = 0x2, TPM_BOTTOMALIGN = 0x20;
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003, WINEVENT_OUTOFCONTEXT = 0;
-    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWA_BORDER_COLOR = 34;
+    public const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
     public const uint MB_YESNO = 0x4, MB_ICONWARNING = 0x30, MB_TOPMOST = 0x40000, MB_SETFOREGROUND = 0x10000;
     public const int IDYES = 6;
 
