@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
+using System.Runtime.InteropServices;
 using Windows.Graphics;
 using WinRT.Interop;
 using static Lou.App.Native.NativeMethods;
@@ -19,6 +20,8 @@ internal sealed class PaletteWindow : Window
 {
     private const int WidthDip = 680;
     private readonly WebView2 _web = new();
+    private readonly WndProc _frameProc;
+    private nint _prevProc;
     private int _heightDip = 72;
 
     public PaletteWindow()
@@ -41,6 +44,11 @@ internal sealed class PaletteWindow : Window
         // Windows 11 outlines rounded windows with a light 1px border; the acrylic panel needs none.
         var border = DWMWA_COLOR_NONE;
         DwmSetWindowAttribute(Hwnd, DWMWA_BORDER_COLOR, ref border, sizeof(int));
+        // WinUI keeps WS_DLGFRAME even without border and title bar, which draws a 3px light frame;
+        // claiming the whole window as client area leaves no frame to draw.
+        _frameProc = (h, msg, w, l) => msg == WM_NCCALCSIZE && w != 0 ? 0 : CallWindowProc(_prevProc, h, msg, w, l);
+        _prevProc = SetWindowLongPtr(Hwnd, GWLP_WNDPROC, Marshal.GetFunctionPointerForDelegate(_frameProc));
+        SetWindowPos(Hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         Activated += (_, e) =>
         {
             if (e.WindowActivationState == WindowActivationState.Deactivated) Hide();

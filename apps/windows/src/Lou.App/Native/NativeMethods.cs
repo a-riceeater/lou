@@ -25,6 +25,9 @@ internal static partial class NativeMethods
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003, WINEVENT_OUTOFCONTEXT = 0;
     public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWA_BORDER_COLOR = 34;
     public const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
+    public const uint WM_NCCALCSIZE = 0x0083;
+    public const int GWLP_WNDPROC = -4;
+    public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20;
     public const uint MB_YESNO = 0x4, MB_ICONWARNING = 0x30, MB_TOPMOST = 0x40000, MB_SETFOREGROUND = 0x10000;
     public const int IDYES = 6;
 
@@ -140,6 +143,15 @@ internal static partial class NativeMethods
 
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(nint hwnd, int attr, ref int value, int size);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern nint SetWindowLongPtr(nint hWnd, int index, nint value);
+
+    [DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
+    public static extern nint CallWindowProc(nint prevProc, nint hWnd, uint msg, nint wParam, nint lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowPos(nint hWnd, nint insertAfter, int x, int y, int cx, int cy, uint flags);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int MessageBox(nint hWnd, string text, string caption, uint type);
