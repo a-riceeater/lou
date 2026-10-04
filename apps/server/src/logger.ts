@@ -29,6 +29,11 @@ export function createLogger(level: string, pretty: boolean): Logger {
     level,
     redact: { paths: REDACT_PATHS, censor: "[redacted]" },
     base: { service: "lou-server" },
+    serializers: {
+      // Fastify request logs: method + path only (no query strings, no headers).
+      req: (req: { method?: string; url?: string; ip?: string }) => ({ method: req.method, url: safeUrl(req.url), remoteAddress: req.ip }),
+      err: pino.stdSerializers.err,
+    },
     ...(pretty ? { transport: { target: "pino-pretty", options: { colorize: true, translateTime: "HH:MM:ss", ignore: "pid,hostname,service" } } } : {}),
   });
 }
