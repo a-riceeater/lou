@@ -54,7 +54,7 @@ export function Palette() {
     const el = panel.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      void bridge().request("window.resize", { height: Math.ceil(el.getBoundingClientRect().height) + 40 }).catch(() => undefined);
+      void bridge().request("window.resize", { height: Math.ceil(el.getBoundingClientRect().height) + (bridge().kind === "native" ? 0 : 40) }).catch(() => undefined);
     });
     ro.observe(el);
     return () => ro.disconnect();

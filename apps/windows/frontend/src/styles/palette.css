@@ -187,3 +187,18 @@ input.editable {
   gap: 14px;
   padding: 0 20px 12px 56px;
 }
+
+/* Native host: the window provides acrylic, corners and shadow; the panel fills it. */
+html[data-native] .palette-root {
+  padding: 0;
+}
+html[data-native] .panel {
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--surface-solid) 55%, transparent);
+  backdrop-filter: none;
+}
+html[data-native] .content {
+  border-top-left-radius: 12px;
+}
