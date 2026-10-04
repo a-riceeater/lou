@@ -1,5 +1,6 @@
 export * from "./appServer";
 export * from "./discovery";
+export * from "./exec";
 export * from "./provider";
 export * from "./runtime";
 export * from "./turn";

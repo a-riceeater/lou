@@ -131,6 +131,8 @@ export class CodexAppServerManager {
   private readonly restartTimes: number[] = [];
   private generationCounter = 0;
   private lockdownArgs: string[] | undefined;
+  private appServerSupported: boolean | undefined;
+  private command: CodexCommand | undefined;
   private readonly killOnExit = () => this.child?.kill();
   private status: CodexHealth = {
     state: "stopped",
@@ -266,12 +268,24 @@ export class CodexAppServerManager {
     this.status.cliVersion ??= (await readCodexVersion(command)) ?? null;
     mkdirSync(this.options.workspaceDir, { recursive: true });
 
+    this.command = command;
+    if (this.appServerSupported === false) throw this.appServerMissingError();
+
     // Phase 1 (first start only): discover which features this CLI version knows,
     // so the locked-down launch only passes names it understands.
     if (!this.lockdownArgs) {
       await this.spawnProcess(command, []);
       try {
-        await this.initialize();
+        try {
+          await this.initialize();
+        } catch (err) {
+          if (/unrecognized subcommand|unexpected argument 'app-server'|no such (sub)?command/i.test(this.stderrTail)) {
+            this.appServerSupported = false;
+            throw this.appServerMissingError();
+          }
+          throw err;
+        }
+        this.appServerSupported = true;
         const signedIn = await this.checkAuth();
         if (!signedIn) {
           await this.stopProcess();
@@ -377,6 +391,24 @@ export class CodexAppServerManager {
       this.status.lastError = "Not signed in. Run: codex login";
     }
     return this.status.signedIn;
+  }
+
+  private appServerMissingError(): LouError {
+    this.status.state = "error";
+    this.status.lastError = `Codex ${this.status.cliVersion ?? ""} has no App Server. Update it: npm install -g @openai/codex@latest`.replace("  ", " ");
+    return new LouError("NOT_CONFIGURED", `This Codex CLI version has no App Server, which Lou needs to keep actions behind its own tools and approvals. Update it with: npm install -g @openai/codex@latest`);
+  }
+
+  /** False when the installed CLI lacks `app-server` (then only the `codex exec` fallback is usable). */
+  get supportsAppServer(): boolean | undefined {
+    return this.appServerSupported;
+  }
+
+  /** Launch details for the `codex exec` compatibility fallback (single-shot, tool-less tasks only). */
+  execFallback(): { command: CodexCommand; workspaceDir: string; featureArgs: string[]; env?: NodeJS.ProcessEnv } | undefined {
+    if (!this.command) return undefined;
+    const core = ["shell_tool", "unified_exec", "view_image"].flatMap((f) => ["--disable", f]);
+    return { command: this.command, workspaceDir: this.options.workspaceDir, featureArgs: [...core, "-c", "project_doc_max_bytes=0"], env: this.options.env };
   }
 
   private async computeFeatureLockdown(): Promise<string[]> {

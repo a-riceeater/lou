@@ -2,6 +2,7 @@ import { LouError } from "@lou/shared";
 import type { ModelProvider, ModelRequest, ModelResponse } from "../model";
 import type { CodexAppServerManager } from "./appServer";
 import type { JsonValue } from "./protocol";
+import { codexExec } from "./exec";
 import { runCodexTurn } from "./turn";
 
 /**
@@ -32,6 +33,20 @@ export class CodexModelProvider implements ModelProvider {
       .join("\n\n");
 
     const model = request.model && request.model !== this.defaultModel ? request.model : this.options.model;
+
+    // Compatibility path for CLIs without App Server: structured `codex exec --json`.
+    if (this.manager.supportsAppServer !== true) {
+      try {
+        await this.manager.ensureStarted();
+      } catch (err) {
+        const fallback = this.manager.supportsAppServer === false ? this.manager.execFallback() : undefined;
+        if (!fallback) throw err;
+        const prompt = [system && `<instructions>\n${system}\n</instructions>`, conversation || "Respond."].filter(Boolean).join("\n\n");
+        const text = await codexExec({ ...fallback, model, timeoutMs: this.options.timeoutMs ?? 120_000 }, prompt, request.responseFormat?.schema, signal);
+        return { text, toolCalls: [], model: model ?? this.defaultModel };
+      }
+    }
+
     const thread = await this.manager.startThread({
       ephemeral: true,
       ...(model ? { model } : {}),
