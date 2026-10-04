@@ -16,7 +16,14 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   readonly title: string;
   /** Model-facing description. */
   readonly description: string;
+  /** Model-facing input schema. Unknown keys are stripped. */
   readonly input: z.ZodType<I>;
+  /**
+   * Schema for the prepared input of approval-gated tools: the model input plus
+   * server-derived fields (recipients, thread IDs). Only approved actions are
+   * validated against it, so the model can never supply derived fields itself.
+   */
+  readonly preparedInput?: z.ZodType<unknown>;
   readonly output?: z.ZodType<O>;
   readonly risk: RiskLevel;
   readonly executionTarget: ExecutionTarget;
