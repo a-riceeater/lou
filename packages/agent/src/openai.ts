@@ -40,6 +40,10 @@ export class OpenAIResponsesProvider implements ModelProvider {
     });
   }
 
+  private stream(params: Record<string, unknown>, onDelta: (text: string) => void, signal?: AbortSignal): Promise<OpenAI.Responses.Response> {
+    return streamResponse(this.client, params, onDelta, signal);
+  }
+
   async complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelResponse> {
     const model = request.model ?? this.options.purposeModels?.[request.purpose] ?? this.defaultModel;
     const nameMap = new Map<string, string>();
@@ -63,7 +67,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
 
     let response: OpenAI.Responses.Response;
     try {
-      response = (await this.client.responses.create(params as never, { signal })) as OpenAI.Responses.Response;
+      response = request.onTextDelta ? await this.stream(params, request.onTextDelta, signal) : ((await this.client.responses.create(params as never, { signal })) as OpenAI.Responses.Response);
     } catch (err) {
       throw mapError(err);
     }
@@ -98,6 +102,18 @@ export class OpenAIResponsesProvider implements ModelProvider {
   }
 }
 
+
+/** Server-sent events: forwards text deltas and returns the completed response. */
+async function streamResponse(client: OpenAI, params: Record<string, unknown>, onDelta: (text: string) => void, signal?: AbortSignal): Promise<OpenAI.Responses.Response> {
+  const events = (await client.responses.create({ ...params, stream: true } as never, { signal })) as unknown as AsyncIterable<{ type: string; delta?: string; response?: OpenAI.Responses.Response }>;
+  let final: OpenAI.Responses.Response | undefined;
+  for await (const event of events) {
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") onDelta(event.delta);
+    else if ((event.type === "response.completed" || event.type === "response.failed" || event.type === "response.incomplete") && event.response) final = event.response;
+  }
+  if (!final) throw new LouError("MODEL_ERROR", "The model stream ended without a response.");
+  return final;
+}
 
 function toInput(messages: ModelMessage[]): unknown[] {
   const items: unknown[] = [];

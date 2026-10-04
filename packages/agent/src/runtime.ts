@@ -156,6 +156,7 @@ export class CustomLunaRuntime implements AgentRuntime {
           tools: this.toolSpecs(state),
           maxOutputTokens: 2000,
           cacheKey: `lou-agent-${state.userId}`,
+          onTextDelta: this.deps.progress.delta ? (text) => this.deps.progress.delta?.(state, text) : undefined,
         },
         signal,
       );

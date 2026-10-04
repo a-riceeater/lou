@@ -84,9 +84,14 @@ describe("Codex CLI provider (mock App Server)", () => {
     const device = await pairDevice(server);
     const auth = { authorization: `Bearer ${device.deviceToken}` };
 
+    const apiDeltas: string[] = [];
+    const offDelta = server.services.bus.on("run.delta", (e) => apiDeltas.push(e.text));
     let done = waitForBus(server.services, "run.completed");
     await server.app.inject({ method: "POST", url: "/api/runs", headers: auth, payload: { text: "hello" } });
     expect((await done).message).toBe("Hi from the API.");
+    // The API provider streams too.
+    expect(apiDeltas.join("")).toBe("Hi from the API.");
+    offDelta();
 
     await useCodex(server, device.deviceToken);
     done = waitForBus(server.services, "run.completed");

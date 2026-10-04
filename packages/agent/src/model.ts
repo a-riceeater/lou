@@ -33,6 +33,8 @@ export interface ModelRequest {
   maxOutputTokens?: number;
   /** Stable key that helps provider-side prompt caching. */
   cacheKey?: string;
+  /** When set, the provider streams and reports assistant text as it is generated. */
+  onTextDelta?: (text: string) => void;
 }
 
 export interface ModelUsage {

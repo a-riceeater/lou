@@ -79,3 +79,33 @@ describe("OpenAIResponsesProvider", () => {
     await expect(provider.complete({ purpose: "agent", messages: [{ role: "user", content: "x" }] })).rejects.toMatchObject({ code: "NOT_CONFIGURED" });
   });
 });
+
+describe("OpenAIResponsesProvider streaming", () => {
+  it("streams text deltas over SSE and returns the completed response", async () => {
+    const completed = {
+      id: "resp_3",
+      object: "response",
+      status: "completed",
+      model: "gpt-6-luna",
+      output: [{ type: "message", id: "m1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "Hello there.", annotations: [] }] }],
+    };
+    const events = [
+      { type: "response.created", response: { ...completed, status: "in_progress", output: [] } },
+      { type: "response.output_text.delta", delta: "Hello " },
+      { type: "response.output_text.delta", delta: "there." },
+      { type: "response.completed", response: completed },
+    ];
+    const bodies: any[] = [];
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      const sse = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+      return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+    const provider = new OpenAIResponsesProvider({ apiKey: "sk-test", model: "gpt-6-luna", fetch: fetchImpl, maxRetries: 0 });
+    const deltas: string[] = [];
+    const res = await provider.complete({ purpose: "agent", messages: [{ role: "user", content: "hi" }], onTextDelta: (t) => deltas.push(t) });
+    expect(bodies[0].stream).toBe(true);
+    expect(deltas).toEqual(["Hello ", "there."]);
+    expect(res.text).toBe("Hello there.");
+  });
+});

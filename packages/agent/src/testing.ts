@@ -16,10 +16,13 @@ export class ScriptedModelProvider implements ModelProvider {
 
   async complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelResponse> {
     if (signal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
-    this.requests.push(structuredClone(request));
+    const { onTextDelta, ...cloneable } = request;
+    this.requests.push(structuredClone(cloneable));
     const step = this.steps[this.cursor++];
     if (!step) throw new Error(`ScriptedModelProvider ran out of steps at call ${this.cursor}`);
     const partial = typeof step === "function" ? step(request) : step;
+    // Simulate streaming word by word, like the real provider.
+    if (onTextDelta && partial.text) for (const word of partial.text.split(/(?<= )/)) onTextDelta(word);
     return { text: partial.text ?? "", toolCalls: partial.toolCalls ?? [], model: partial.model ?? this.defaultModel, usage: partial.usage };
   }
 
