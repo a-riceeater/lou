@@ -84,6 +84,8 @@ Run the UI in a browser against the dev server (uses a development bridge that t
 npm run dev:ui      # http://localhost:5173/#/app  or  #/palette
 ```
 
+Design preview with fixture data (no server needed): `cd apps/windows/frontend && npx vite --mode demo`, then open `#/palette?state=approval`, `#/palette?state=answer`, or `#/app/inbox`.
+
 Or inside the real host with `LOU_UI_DEV_URL=http://localhost:5173` set before starting `Lou.exe` (dev tools enabled).
 
 ## Tests

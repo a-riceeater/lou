@@ -7,7 +7,9 @@ import { NativeBridge } from "./bridge/native";
 import "./styles/global.css";
 
 const native = NativeBridge.available();
-setBridge(native ? new NativeBridge(window.chrome!.webview!) : new DevBridge());
+if (native) setBridge(new NativeBridge(window.chrome!.webview!));
+else if (import.meta.env.MODE === "demo") setBridge(new (await import("./bridge/demo")).DemoBridge());
+else setBridge(new DevBridge());
 // In the Windows app the window itself is the panel (native acrylic, rounded corners, shadow).
 if (native) document.documentElement.dataset.native = "1";
 
