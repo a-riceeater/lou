@@ -754,3 +754,17 @@ Do not begin with autonomous browser control, code-writing skills, or large plug
 Get one complete workflow reliable first:
 
 > Find email → draft reply → show popup → edit → approve → send.
+
+---
+
+# 14. Implementation Notes
+
+Refinements made while building the initial release. None change the architecture; they pin down details the spec left open.
+
+- **Approvals are created by policy, not by the model.** When the model calls an approval-gated tool (e.g. `gmail.reply`), the ToolExecutor runs the tool's `prepare()` step, which derives recipients, subject and threading on the server, and creates the approval itself. `approval.create` / `approval.resolve` exist as *internal* tools for system code and are never offered to the model. This removes any path where a model could propose an action without the approval step.
+- **Approvals are bound to hashes.** `actionHash` = SHA-256 of the canonical JSON of the immutable proposed input. Resolution must echo it. Only declared editable fields may change, and the executor runs only an input whose hash equals the approved final hash (SECURITY.md §8).
+- **Tainted runs.** Once a run has read external content (any tool with `untrustedOutput`), the policy engine escalates every non-read tool to approval and blocks privileged tools outright. Escalations can only add requirements, never remove them.
+- **Device commands are HMAC-signed** over the exact transmitted body string with a per-device key, plus expiry and replay checks on the device. This avoids cross-language JSON canonicalization (DESKTOP_CLIENT.md §11: reject unsigned or invalid commands).
+- **The React UI never talks to the server directly.** All HTTPS goes through the C# host's `api.request` bridge method, so the device credential stays in DPAPI storage in the trusted host. The host forwards server pushes to the UI but never forwards device commands.
+- **Gmail monitoring polls `users.history`** instead of Pub/Sub push, so a personal server needs no Google Cloud Pub/Sub setup. Push can replace polling behind the same event pipeline.
+- **Windows client layout.** `DESKTOP_CLIENT.md` §2 lists suggested file names. The implementation separates a UI-free `Lou.Agent` library (protocol, credentials, verification, device tools, UI Automation through FlaUI/UIA3) from the WinUI `Lou.App` host (tray, hotkey, windows, WebView2 bridge, notifications) so the agent is unit-testable and stays alive without visible windows.
