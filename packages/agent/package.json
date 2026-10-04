@@ -5,5 +5,12 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lou/shared": "*",
+    "@lou/protocol": "*",
+    "@lou/tools": "*",
+    "openai": "^7.27.0",
+    "zod": "^4.6.5"
   }
 }
