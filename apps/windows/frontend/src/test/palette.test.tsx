@@ -122,3 +122,15 @@ describe("assistant palette", () => {
     await waitFor(() => expect(screen.getByText("Reply to Mr. Smith")).toBeInTheDocument());
   });
 });
+
+describe("approval delivery", () => {
+  it("does not reset an in-progress edit when the same approval arrives again", async () => {
+    const user = userEvent.setup();
+    render(<Palette />);
+    act(() => bridge.server("approval.requested", { approval: sampleApproval() }));
+    const body = await screen.findByLabelText("Message");
+    await user.type(body, " Thanks!");
+    act(() => bridge.server("approval.requested", { approval: sampleApproval() }));
+    expect(screen.getByLabelText("Message")).toHaveValue("Sounds good. I'll be there around 6. Thanks!");
+  });
+});

@@ -112,6 +112,8 @@ export const usePalette = create<PaletteStore>((set, get) => {
 
     showApproval(approval) {
       if (approval.status !== "pending") return;
+      // The push and the polling fallback can both deliver the same approval; never clobber edits.
+      if (get().approval?.id === approval.id && (get().phase === "approval" || get().phase === "sending")) return;
       const draft: Record<string, string> = {};
       for (const f of approval.fields) if (f.editable) draft[f.key] = f.value;
       set({ phase: "approval", approval, draft, label: "", error: null, runId: approval.runId ?? get().runId });
