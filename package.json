@@ -1,0 +1,29 @@
+{
+  "name": "lou",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Personal multi-device AI assistant platform",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/server",
+    "apps/windows/frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @lou/server",
+    "dev:ui": "npm run dev -w @lou/windows-frontend",
+    "build": "npm run build -w @lou/server && npm run build -w @lou/windows-frontend",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck -w @lou/windows-frontend",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.3"
+  }
+}

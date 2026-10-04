@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+# .NET
+bin/
+obj/
+*.user
+.vs/
+apps/windows/src/Lou.App/wwwroot/
+TestResults/
