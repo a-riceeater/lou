@@ -25,6 +25,8 @@ export interface PaletteStore {
 
   setText(text: string): void;
   submit(inputMode?: "text" | "voice", provider?: AiProvider): Promise<void>;
+  /** Forgets the current conversation so the next request starts a new chat. */
+  newChat(): void;
   retryWith(provider: AiProvider): Promise<void>;
   setDraft(key: string, value: string): void;
   approve(): Promise<void>;
@@ -101,8 +103,15 @@ export const usePalette = create<PaletteStore>((set, get) => {
     setText: (text) => set({ text }),
 
     async submit(inputMode = "text", provider) {
-      const text = get().text.trim();
+      let text = get().text.trim();
       if (!text || ["thinking", "tool", "sending"].includes(get().phase)) return;
+      // "/new" starts a new chat; "/new <request>" starts one with that request.
+      const command = /^\/new(?:\s+|$)/i.exec(text);
+      if (command) {
+        get().newChat();
+        text = text.slice(command[0].length).trim();
+        if (!text) return;
+      }
       clearTimeout(dismissTimer);
       const fresh = Date.now() - get().conversationAt > CONVERSATION_TTL_MS;
       set({ phase: "thinking", label: "Thinking", message: null, error: null, approval: null, draft: {}, stream: "", lastRequest: text });
@@ -113,6 +122,11 @@ export const usePalette = create<PaletteStore>((set, get) => {
       } catch (err) {
         get().fail(err);
       }
+    },
+
+    newChat() {
+      if (get().phase === "success" || get().phase === "failure") get().reset();
+      set({ conversationId: null, conversationAt: 0, text: "" });
     },
 
     async retryWith(provider) {

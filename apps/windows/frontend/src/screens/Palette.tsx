@@ -93,6 +93,10 @@ export function Palette() {
           if (voice.recording) voice.stop();
           // Hiding never discards work: a pending approval is still there next time.
           void bridge().request("window.hide").catch(() => undefined);
+        } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") {
+          e.preventDefault();
+          s.newChat();
+          input.current?.focus();
         }
       }}
     >
@@ -110,7 +114,7 @@ export function Palette() {
               ref={input}
               autoFocus
               aria-label="Ask Lou"
-              placeholder={s.phase === "approval" ? "Ask something else…" : "Ask anything…"}
+              placeholder={s.phase === "approval" ? "Ask something else…" : s.conversationId ? "Ask anything… (Ctrl+N for a new chat)" : "Ask anything…"}
               value={s.text}
               spellCheck={false}
               onChange={(e) => s.setText(e.target.value)}

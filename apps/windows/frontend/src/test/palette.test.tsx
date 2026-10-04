@@ -16,6 +16,7 @@ beforeEach(() => {
     .route("POST /api/approvals/apr_1/resolve", (body) => ({ ...sampleApproval(), status: body.decision === "approve" ? "approved" : "rejected" }));
   setBridge(bridge);
   usePalette.getState().reset();
+  usePalette.setState({ conversationId: null, conversationAt: 0 });
 });
 
 afterEach(() => usePalette.getState().reset());
@@ -167,5 +168,38 @@ describe("provider integration", () => {
     await user.click(screen.getByRole("button", { name: "Try with OpenAI API" }));
     const retry = bridge.apiCalls("/api/runs")[1];
     expect(retry.body).toMatchObject({ text: "hello", provider: "openai_api" });
+  });
+});
+
+describe("new chat", () => {
+  async function askAndFinish(user: ReturnType<typeof userEvent.setup>, text: string) {
+    await user.type(screen.getByLabelText("Ask Lou"), `${text}{Enter}`);
+    await waitFor(() => expect(presence()).toBe("thinking"));
+    act(() => bridge.server("agent.completed", { runId: "run_1", status: "completed", message: "Done.", error: null }));
+    await waitFor(() => expect(presence()).toBe("success"));
+  }
+  const conversationIds = () => bridge.apiCalls("/api/runs").map((c) => c.body.conversationId);
+
+  it("continues the conversation until Ctrl+N starts a new one", async () => {
+    const user = userEvent.setup();
+    render(<Palette />);
+    await askAndFinish(user, "first");
+    await askAndFinish(user, "follow-up");
+    await user.keyboard("{Control>}n{/Control}");
+    expect(presence()).toBe("idle");
+    await askAndFinish(user, "unrelated");
+    expect(conversationIds()).toEqual([undefined, "conv_1", undefined]);
+  });
+
+  it("/new starts a new chat without sending, and /new <request> sends it in a new chat", async () => {
+    const user = userEvent.setup();
+    render(<Palette />);
+    await askAndFinish(user, "first");
+    await user.type(screen.getByLabelText("Ask Lou"), "/new{Enter}");
+    expect(bridge.apiCalls("/api/runs")).toHaveLength(1);
+    expect(screen.getByLabelText("Ask Lou")).toHaveValue("");
+    await askAndFinish(user, "/NEW what's on my calendar");
+    expect(bridge.apiCalls("/api/runs")[1].body).toMatchObject({ text: "what's on my calendar", conversationId: undefined });
+    expect(usePalette.getState().conversationId).toBe("conv_1");
   });
 });
