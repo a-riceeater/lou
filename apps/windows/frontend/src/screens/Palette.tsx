@@ -143,6 +143,15 @@ export function Palette() {
               </div>
             </motion.div>
           )}
+          {(s.phase === "thinking" || s.phase === "tool") && s.stream && (
+            <motion.div key="stream" {...reveal} style={{ overflow: "hidden" }}>
+              <div className="body">
+                <div className="answer streaming" data-testid="stream" aria-live="polite">
+                  {s.stream}
+                </div>
+              </div>
+            </motion.div>
+          )}
           {s.phase === "success" && s.message && (
             <motion.div key="answer" {...reveal} style={{ overflow: "hidden" }}>
               <div className="body">
@@ -157,6 +166,11 @@ export function Palette() {
               <div className="body" role="alert">
                 <div className="error-line">{s.error.message}</div>
                 <div className="error-actions">
+                  {s.error.fallbackProvider && (
+                    <button className="btn btn-primary" type="button" onClick={() => void s.retryWith(s.error!.fallbackProvider!)}>
+                      {s.error.fallbackProvider === "openai_api" ? "Try with OpenAI API" : "Try with Codex"}
+                    </button>
+                  )}
                   {s.error.action === "reconnect" && (
                     <button className="btn" type="button" onClick={() => void bridge().request("window.show", { surface: "app", route: "accounts" })}>
                       Reconnect

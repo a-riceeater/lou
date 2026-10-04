@@ -1,5 +1,7 @@
 import type {
+  AiProvider,
   AccountView,
+  ProviderStatus,
   ApprovalView,
   AuditEntry,
   ConnectAccountResponse,
@@ -32,8 +34,8 @@ async function call<T>(method: Method, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
-  startRun: (text: string, conversationId?: string, inputMode: "text" | "voice" = "text") =>
-    call<CreateRunResponse>("POST", "/api/runs", { text, conversationId, inputMode }),
+  startRun: (text: string, conversationId?: string, inputMode: "text" | "voice" = "text", provider?: AiProvider) =>
+    call<CreateRunResponse>("POST", "/api/runs", { text, conversationId, inputMode, ...(provider ? { provider } : {}) }),
   run: (id: string) => call<RunView>("GET", `/api/runs/${id}`),
   cancelRun: (id: string) => call<{ ok: true }>("POST", `/api/runs/${id}/cancel`),
   history: () => call<{ items: HistoryItem[] }>("GET", "/api/history?limit=100").then((r) => r.items),
@@ -71,14 +73,25 @@ export const api = {
 
   audit: (runId?: string) => call<{ items: AuditEntry[] }>("GET", `/api/audit?limit=200${runId ? `&runId=${runId}` : ""}`).then((r) => r.items),
   settings: () => call<SettingsView>("GET", "/api/settings"),
+  providers: (probe = false) => call<{ active: AiProvider; items: ProviderStatus[] }>("GET", `/api/providers${probe ? "?probe=1" : ""}`),
   updateSettings: (patch: Partial<SettingsView>) => call<SettingsView>("PATCH", "/api/settings", patch),
 
   transcribe: (audioBase64: string, mimeType: string) => bridge().request<{ text: string }>("api.transcribe", { audioBase64, mimeType }),
 };
 
 /** Turns error codes into short, actionable copy (DESIGN.md §9). */
-export function friendlyError(err: unknown): { message: string; action?: "reconnect" | "retry" | "settings"; detail?: string } {
-  const e = err as { code?: string; message?: string };
+export interface FriendlyError {
+  message: string;
+  action?: "reconnect" | "retry" | "settings";
+  detail?: string;
+  /** Another provider the user may explicitly retry with (never applied automatically). */
+  fallbackProvider?: AiProvider;
+}
+
+export function friendlyError(err: unknown): FriendlyError {
+  const e = err as { code?: string; message?: string; details?: { fallbackProvider?: AiProvider } };
+  const fallbackProvider = e.details?.fallbackProvider;
+  if (fallbackProvider) return { message: e.message ?? "The assistant couldn't finish that.", action: e.code === "NOT_CONFIGURED" ? "settings" : "retry", detail: e.code, fallbackProvider };
   switch (e.code) {
     case "AUTH_REQUIRED":
       return { message: e.message ?? "An account needs you to sign in again.", action: "reconnect" };

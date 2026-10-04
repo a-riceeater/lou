@@ -1,6 +1,6 @@
-import type { ApprovalView, ServerMessage } from "@lou/protocol";
+import type { AiProvider, ApprovalView, ServerMessage } from "@lou/protocol";
 import { create } from "zustand";
-import { api, friendlyError } from "../api/client";
+import { api, friendlyError, type FriendlyError } from "../api/client";
 import { bridge } from "../bridge/bridge";
 
 export type Phase = "idle" | "listening" | "transcribing" | "thinking" | "tool" | "approval" | "sending" | "success" | "failure";
@@ -17,10 +17,15 @@ export interface PaletteStore {
   /** Current values of editable approval fields. */
   draft: Record<string, string>;
   message: string | null;
-  error: { message: string; action?: string; detail?: string } | null;
+  error: FriendlyError | null;
+  /** Assistant text streamed so far for the current run. */
+  stream: string;
+  /** The last request, kept so the user can explicitly retry with another provider. */
+  lastRequest: string | null;
 
   setText(text: string): void;
-  submit(inputMode?: "text" | "voice"): Promise<void>;
+  submit(inputMode?: "text" | "voice", provider?: AiProvider): Promise<void>;
+  retryWith(provider: AiProvider): Promise<void>;
   setDraft(key: string, value: string): void;
   approve(): Promise<void>;
   reject(): Promise<void>;
@@ -66,7 +71,7 @@ export const usePalette = create<PaletteStore>((set, get) => {
   function finish(message: string | null) {
     stopPolling();
     const hadAction = get().approval !== null;
-    set({ phase: "success", message: message ?? "Done.", label: "", approval: null });
+    set({ phase: "success", message: message ?? "Done.", label: "", approval: null, stream: "" });
     // Completed actions get out of the way; answers stay until dismissed.
     if (hadAction) {
       clearTimeout(dismissTimer);
@@ -90,22 +95,31 @@ export const usePalette = create<PaletteStore>((set, get) => {
     draft: {},
     message: null,
     error: null,
+    stream: "",
+    lastRequest: null,
 
     setText: (text) => set({ text }),
 
-    async submit(inputMode = "text") {
+    async submit(inputMode = "text", provider) {
       const text = get().text.trim();
       if (!text || ["thinking", "tool", "sending"].includes(get().phase)) return;
       clearTimeout(dismissTimer);
       const fresh = Date.now() - get().conversationAt > CONVERSATION_TTL_MS;
-      set({ phase: "thinking", label: "Thinking", message: null, error: null, approval: null, draft: {} });
+      set({ phase: "thinking", label: "Thinking", message: null, error: null, approval: null, draft: {}, stream: "", lastRequest: text });
       try {
-        const res = await api.startRun(text, fresh ? undefined : (get().conversationId ?? undefined), inputMode);
+        const res = await api.startRun(text, fresh ? undefined : (get().conversationId ?? undefined), inputMode, provider);
         set({ runId: res.runId, conversationId: res.conversationId, conversationAt: Date.now(), text: "" });
         startPolling(res.runId);
       } catch (err) {
         get().fail(err);
       }
+    },
+
+    async retryWith(provider) {
+      const text = get().lastRequest;
+      if (!text) return;
+      set({ text, phase: "idle" });
+      await get().submit("text", provider);
     },
 
     setDraft: (key, value) => set({ draft: { ...get().draft, [key]: value } }),
@@ -116,7 +130,7 @@ export const usePalette = create<PaletteStore>((set, get) => {
       if (get().approval?.id === approval.id && (get().phase === "approval" || get().phase === "sending")) return;
       const draft: Record<string, string> = {};
       for (const f of approval.fields) if (f.editable) draft[f.key] = f.value;
-      set({ phase: "approval", approval, draft, label: "", error: null, runId: approval.runId ?? get().runId });
+      set({ phase: "approval", approval, draft, label: "", error: null, stream: "", runId: approval.runId ?? get().runId });
     },
 
     async approve() {
@@ -162,6 +176,10 @@ export const usePalette = create<PaletteStore>((set, get) => {
           } else if (s.phase === "sending" && frame.payload.label) set({ label: frame.payload.label });
           return;
         }
+        case "agent.delta": {
+          if (frame.payload.runId === s.runId && (s.phase === "thinking" || s.phase === "tool")) set({ stream: s.stream + frame.payload.text });
+          return;
+        }
         case "approval.requested": {
           const a = frame.payload.approval;
           const ours = a.runId && a.runId === s.runId;
@@ -202,13 +220,13 @@ export const usePalette = create<PaletteStore>((set, get) => {
 
     fail(err) {
       stopPolling();
-      set({ phase: "failure", error: friendlyError(err), label: "", approval: null });
+      set({ phase: "failure", error: friendlyError(err), label: "", approval: null, stream: "" });
     },
 
     reset() {
       stopPolling();
       clearTimeout(dismissTimer);
-      set({ phase: "idle", text: "", label: "", runId: null, approval: null, draft: {}, message: null, error: null });
+      set({ phase: "idle", text: "", label: "", runId: null, approval: null, draft: {}, message: null, error: null, stream: "" });
     },
   };
 });

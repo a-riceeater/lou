@@ -205,3 +205,17 @@ html[data-native] .panel {
 html[data-native] .content {
   border-top-left-radius: 12px;
 }
+
+/* Streamed text: same type as the answer, with a soft caret while it arrives. */
+.answer.streaming::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  background: var(--iris);
+  opacity: 0.6;
+  animation: blink 1s var(--ease) infinite;
+}
