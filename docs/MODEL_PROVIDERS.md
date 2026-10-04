@@ -26,7 +26,7 @@ Optional settings:
 
 | Variable | Purpose |
 | --- | --- |
-| `CODEX_PATH` | Full path to `codex` if it isn't on `PATH` (npm `.cmd` shims on Windows are handled automatically) |
+| `CODEX_PATH` | Full path to `codex` if it isn't on `PATH` (`~` is expanded; npm `.cmd` shims on Windows are handled automatically). `~/.local/bin` is searched even when it isn't on `PATH`. |
 | `LOU_CODEX_MODEL` | Model for Codex threads (default: the model configured in Codex) |
 | `LOU_CODEX_WORKSPACE` | Empty working directory given to Codex (default `${LOU_DATA_DIR}/codex-workspace`) |
 | `LOU_CODEX_TURN_TIMEOUT_SECONDS` | Per-turn timeout (default 300) |
@@ -73,7 +73,9 @@ If the installed CLI has no `app-server` command, agent requests fail with an up
 
 | Settings shows | Meaning and fix |
 | --- | --- |
-| **Unavailable**: Codex executable not found | Install with `npm install -g @openai/codex`, or set `CODEX_PATH`. Under systemd, make sure `codex` is on the service's `PATH`. |
+| **Unavailable**: Codex executable not found | Install with `npm install -g @openai/codex`, or set `CODEX_PATH`. `npm start` and `npm run dev` read `apps/server/.env`, not a `.env` at the repo root. Under systemd, make sure `codex` is on the service's `PATH`. |
+| **Unavailable**: CODEX_PATH … doesn't exist as seen by the server | The server process can't see that path. The provided systemd unit runs as `lou` with `ProtectHome=true`, so nothing under `/home` is visible. Install Codex system-wide (below) instead of using a copy in your own home directory. |
+| **Unavailable**: CODEX_PATH … isn't readable | The server's OS user lacks permission on the file or a parent directory (Ubuntu home directories are `750`). Install Codex system-wide, or run the server as the user who owns that path. |
 | **Not signed in**: Run: `codex login` | Sign in as the **same OS user that runs the Lou server** (see below), then press **Check Codex status**. |
 | **Unavailable**: … has no App Server | Update Codex: `npm install -g @openai/codex@latest`. |
 | **Unavailable**: MCP servers could not be disabled | A server in `~/.codex/config.toml` couldn't be turned off. Remove it, or point Lou at a dedicated `CODEX_HOME`. |
