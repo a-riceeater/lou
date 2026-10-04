@@ -12,6 +12,11 @@ export interface ToolFamily {
   keywords: readonly string[];
   /** Always exposed regardless of the request. */
   core?: boolean;
+  /**
+   * Large families (e.g. an MCP server with dozens of tools) expose only the most
+   * relevant tools for the request, ranked lexically, instead of the whole family.
+   */
+  maxTools?: number;
 }
 
 export const BUILTIN_FAMILIES: readonly ToolFamily[] = [

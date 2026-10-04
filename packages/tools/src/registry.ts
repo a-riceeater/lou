@@ -70,7 +70,7 @@ export class ToolRegistry {
   /** JSON Schema for a tool's input, for documentation and the model. */
   inputJsonSchema(id: string): Record<string, unknown> {
     const def = this.require(id);
-    return toJsonSchema(def.input);
+    return def.inputJsonSchema ?? toJsonSchema(def.input);
   }
 
   outputJsonSchema(id: string): Record<string, unknown> | undefined {
@@ -86,7 +86,7 @@ export class ToolRegistry {
       if (!def || def.exposure !== "model") continue;
       let spec = this.specCache.get(id);
       if (!spec) {
-        spec = { name: id, description: def.description, parameters: toJsonSchema(def.input) };
+        spec = { name: id, description: def.description, parameters: def.inputJsonSchema ?? toJsonSchema(def.input) };
         this.specCache.set(id, spec);
       }
       out.push(spec);

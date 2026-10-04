@@ -1,4 +1,4 @@
-import { LouError, toLouError, wrapUntrusted, type Result, type SerializedError } from "@lou/shared";
+import { Bm25Index, LouError, toLouError, wrapUntrusted, type Result, type SerializedError } from "@lou/shared";
 import {
   selectFamilies,
   type AnyToolDefinition,
@@ -55,7 +55,7 @@ export class CustomLunaRuntime implements AgentRuntime {
     const ctx = await this.deps.context.build(input);
     const families = new Set([...selectFamilies(input.text, this.deps.families()), ...ctx.families]);
     const exposed = new Set<string>();
-    for (const family of families) for (const def of this.deps.registry.byFamily(family)) if (def.exposure === "model") exposed.add(def.id);
+    for (const family of families) for (const id of this.familyTools(family, input.text)) exposed.add(id);
 
     const transcript: ModelMessage[] = [
       ...ctx.history.map((h) => ({ role: h.role, content: h.content }) as ModelMessage),
@@ -321,12 +321,19 @@ export class CustomLunaRuntime implements AgentRuntime {
     if (typeof family !== "string" || !known) {
       return { success: false, error: { code: "VALIDATION_FAILED", message: `Unknown tool family "${String(family)}".`, retryable: false } };
     }
-    const added = this.deps.registry
-      .byFamily(family)
-      .filter((d) => d.exposure === "model" && !state.exposedTools.includes(d.id))
-      .map((d) => d.id);
+    const added = this.familyTools(family, state.request).filter((id) => !state.exposedTools.includes(id));
     state.exposedTools = [...state.exposedTools, ...added].sort();
     return { success: true, data: { enabled: added } };
+  }
+
+  /** Model-exposed tools of a family; large families are narrowed to the most relevant tools. */
+  private familyTools(familyId: string, text: string): string[] {
+    const defs = this.deps.registry.byFamily(familyId).filter((d) => d.exposure === "model");
+    const max = this.deps.families().find((f) => f.id === familyId)?.maxTools;
+    if (!max || defs.length <= max) return defs.map((d) => d.id);
+    const index = new Bm25Index(defs.map((d) => ({ id: d.id, text: `${d.id.replace(/[._]/g, " ")} ${d.description}` })));
+    const ranked = index.search(text, max).map((h) => h.id);
+    return ranked.length ? ranked : defs.slice(0, max).map((d) => d.id);
   }
 
   private onSkillLoaded(state: RunState, data: unknown): void {

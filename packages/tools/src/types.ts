@@ -25,6 +25,8 @@ export interface ToolDefinition<I = unknown, O = unknown> {
    */
   readonly preparedInput?: z.ZodType<unknown>;
   readonly output?: z.ZodType<O>;
+  /** Raw JSON Schema for the model when the input comes from an external source (e.g. MCP). */
+  readonly inputJsonSchema?: Record<string, unknown>;
   readonly risk: RiskLevel;
   readonly executionTarget: ExecutionTarget;
   readonly requiresApproval: boolean;

@@ -5,3 +5,4 @@ export * from "./canonical";
 export * from "./risk";
 export * from "./untrusted";
 export * from "./async";
+export * from "./search";
