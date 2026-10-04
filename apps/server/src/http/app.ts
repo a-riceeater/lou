@@ -14,7 +14,6 @@ export async function buildApp(s: Services): Promise<FastifyInstance> {
     loggerInstance: s.logger as unknown as FastifyBaseLogger,
     trustProxy: s.config.trustProxy,
     bodyLimit: 1024 * 1024,
-    disableRequestLogging: false,
     genReqId: () => `req_${Math.random().toString(36).slice(2, 12)}`,
   });
 
