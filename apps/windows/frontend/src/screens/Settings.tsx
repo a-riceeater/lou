@@ -1,10 +1,13 @@
 import type { SettingsView } from "@lou/protocol";
 import { api } from "../api/client";
 import { bridge } from "../bridge/bridge";
+import { ProviderPicker } from "../components/ProviderPicker";
 import { LoadError, Toggle, useLoad } from "../components/ui";
 
+type BooleanSetting = { [K in keyof SettingsView]: SettingsView[K] extends boolean ? K : never }[keyof SettingsView];
+
 /** Emergency controls work without the agent (SECURITY.md §12). */
-const CONTROLS: Array<{ key: keyof SettingsView; title: string; detail: string; danger?: boolean }> = [
+const CONTROLS: Array<{ key: BooleanSetting; title: string; detail: string; danger?: boolean }> = [
   { key: "agentPaused", title: "Pause Lou", detail: "Stop all new requests and actions.", danger: true },
   { key: "writeToolsDisabled", title: "Turn off actions", detail: "Lou can still read and answer, but can't send or change anything.", danger: true },
   { key: "deviceControlDisabled", title: "Turn off computer control", detail: "Lou can't open apps, files or use windows on any device.", danger: true },
@@ -16,7 +19,7 @@ export function Settings() {
   const settings = useLoad(() => api.settings());
   const info = useLoad(() => bridge().request<{ version: string; hotkey: string; connection?: { serverUrl: string | null } }>("app.info"));
 
-  const update = async (key: keyof SettingsView, value: boolean) => {
+  const update = async (key: BooleanSetting, value: boolean) => {
     settings.setData(await api.updateSettings({ [key]: value }));
   };
 
@@ -24,6 +27,11 @@ export function Settings() {
     <>
       <h1 className="screen-title">Settings</h1>
       <p className="screen-sub">Controls that apply to every device.</p>
+
+      <h2 className="section-title" style={{ marginTop: 0 }}>Assistant model</h2>
+      <ProviderPicker />
+
+      <h2 className="section-title">Safety</h2>
 
       {settings.error ? (
         <LoadError message={settings.error} onRetry={() => void settings.reload()} />

@@ -134,3 +134,38 @@ describe("approval delivery", () => {
     expect(screen.getByLabelText("Message")).toHaveValue("Sounds good. I'll be there around 6. Thanks!");
   });
 });
+
+describe("provider integration", () => {
+  it("streams assistant text while the run is in progress", async () => {
+    const user = userEvent.setup();
+    render(<Palette />);
+    await user.type(screen.getByLabelText("Ask Lou"), "what's up{Enter}");
+    await waitFor(() => expect(presence()).toBe("thinking"));
+    act(() => bridge.server("agent.delta", { runId: "run_1", text: "Mr. Smith " }));
+    act(() => bridge.server("agent.delta", { runId: "run_1", text: "asked about Friday." }));
+    expect(screen.getByTestId("stream")).toHaveTextContent("Mr. Smith asked about Friday.");
+    act(() => bridge.server("agent.completed", { runId: "run_1", status: "completed", message: "Mr. Smith asked about Friday.", error: null }));
+    await waitFor(() => expect(screen.getByTestId("answer")).toHaveTextContent("Mr. Smith asked about Friday."));
+    await waitFor(() => expect(screen.queryByTestId("stream")).not.toBeInTheDocument());
+  });
+
+  it("offers an explicit retry with the other provider instead of switching silently", async () => {
+    const user = userEvent.setup();
+    render(<Palette />);
+    await user.type(screen.getByLabelText("Ask Lou"), "hello{Enter}");
+    act(() =>
+      bridge.server("agent.completed", {
+        runId: "run_1",
+        status: "failed",
+        message: null,
+        error: { code: "NOT_CONFIGURED", message: "Codex CLI isn't signed in. Run: codex login", details: { provider: "codex_cli", fallbackProvider: "openai_api" } },
+      }),
+    );
+    await waitFor(() => expect(presence()).toBe("failure"));
+    expect(screen.getByRole("alert")).toHaveTextContent("codex login");
+    expect(bridge.apiCalls("/api/runs")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Try with OpenAI API" }));
+    const retry = bridge.apiCalls("/api/runs")[1];
+    expect(retry.body).toMatchObject({ text: "hello", provider: "openai_api" });
+  });
+});

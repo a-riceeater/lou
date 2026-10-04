@@ -74,7 +74,14 @@ const fixtures: Record<string, unknown> = {
       { id: "m3", type: "contact", content: "Sarah Lee is my chemistry lab partner.", source: "agent-inferred", confidence: 0.6, status: "active", createdAt: ago(60), updatedAt: ago(60), expiresAt: null },
     ],
   },
-  "GET /api/settings": { writeToolsDisabled: false, deviceControlDisabled: false, monitoringDisabled: false, agentPaused: false, autoActivateLowRiskSkills: false },
+  "GET /api/settings": { writeToolsDisabled: false, deviceControlDisabled: false, monitoringDisabled: false, agentPaused: false, autoActivateLowRiskSkills: false, aiProvider: "codex_cli" },
+  "GET /api/providers": {
+    active: "codex_cli",
+    items: [
+      { id: "openai_api", label: "OpenAI API", active: false, state: "not_configured", summary: "Not set up", hint: "Set OPENAI_API_KEY on the server.", details: { Model: "gpt-6-luna", Authentication: "none" } },
+      { id: "codex_cli", label: "Codex CLI", active: true, state: "ready", summary: "Connected", hint: null, details: { CLI: "installed (0.151.0)", Status: "connected", Authentication: "ChatGPT (plus)", Sandbox: "locked down: Lou tools only" } },
+    ],
+  },
 };
 
 export class DemoBridge implements Bridge {
