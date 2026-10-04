@@ -24,8 +24,10 @@ internal sealed class PaletteWindow : Window
     public PaletteWindow()
     {
         Title = "Lou";
-        // Opened by hotkey, so programmatic focus would draw the keyboard focus rectangle around the whole page.
+        // Opened by hotkey, so WinUI would draw its keyboard focus rectangle around the whole page.
         _web.UseSystemFocusVisuals = false;
+        _web.FocusVisualPrimaryThickness = new Thickness(0);
+        _web.FocusVisualSecondaryThickness = new Thickness(0);
         Content = new Grid { Background = new SolidColorBrush(Colors.Transparent), Children = { _web } };
         SystemBackdrop = new DesktopAcrylicBackdrop();
         var presenter = OverlappedPresenter.CreateForDialog();
@@ -67,7 +69,8 @@ internal sealed class PaletteWindow : Window
         AppWindow.Show();
         Activate();
         SetForegroundWindow(Hwnd);
-        _web.Focus(FocusState.Programmatic);
+        // Programmatic focus right after a key press counts as keyboard focus and shows the focus visual; pointer focus never does.
+        _web.Focus(FocusState.Pointer);
     }
 
     public void Hide() => AppWindow.Hide();
