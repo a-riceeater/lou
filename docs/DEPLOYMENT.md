@@ -42,7 +42,7 @@ node apps/server/dist/cli.js gen-key        # paste into LOU_MASTER_KEY
 sudoedit /etc/lou/lou.env
 ```
 
-Required in production: `LOU_MASTER_KEY`, an `https://` `LOU_PUBLIC_URL`, and `OPENAI_API_KEY`. Keep a copy of the master key somewhere safe: without it the encrypted OAuth tokens and device keys can't be read, so you'd have to reconnect accounts and re-pair devices.
+Required in production: `LOU_MASTER_KEY`, an `https://` `LOU_PUBLIC_URL`, and a model provider: `OPENAI_API_KEY`, or `AI_PROVIDER=codex_cli` with Codex signed in as the `lou` user (see [MODEL_PROVIDERS.md](MODEL_PROVIDERS.md#running-under-systemd-ubuntu)). Keep a copy of the master key somewhere safe: without it the encrypted OAuth tokens and device keys can't be read, so you'd have to reconnect accounts and re-pair devices.
 
 Optional: copy `deploy/mcp.example.json` to `/etc/lou/mcp.json` and set `LOU_MCP_CONFIG`.
 

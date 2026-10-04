@@ -46,7 +46,8 @@ Codes are single-use, expire after 10 minutes, and are rate limited. Token and k
 | --- | --- |
 | `session.ready` | `{ sessionId, deviceId, protocolVersion, serverTime, currentSeq, resyncRequired }` |
 | `agent.progress` | `{ runId, status, label? }` (label is user-facing, e.g. "Searching email") |
-| `agent.completed` | `{ runId, status, message, error }` |
+| `agent.delta` | `{ runId, text }` streamed assistant text (not replayed; the final message arrives in `agent.completed`) |
+| `agent.completed` | `{ runId, status, message, error }`. A failed run may carry `error.details.fallbackProvider`, an explicit retry offer |
 | `approval.requested` | `{ approval: ApprovalView }` |
 | `approval.resolved` | `{ approvalId, status: approved \| rejected \| expired \| executed \| failed, runId }` |
 | `notification.created` | `{ notification: NotificationView }` |
@@ -74,7 +75,7 @@ The signature covers the exact transmitted string, so no cross-language canonica
 | Method & path | Purpose |
 | --- | --- |
 | `GET /api/me` | Identity, server version, model |
-| `POST /api/runs` `{ text, conversationId?, inputMode }` | Start a run → `202 { runId, conversationId }` |
+| `POST /api/runs` `{ text, conversationId?, inputMode, provider? }` | Start a run → `202 { runId, conversationId }`. `provider` is a one-off, audited override |
 | `GET /api/runs/:id` | `RunView` with user-facing steps |
 | `POST /api/runs/:id/cancel` | Cancel (expires its pending approval) |
 | `GET /api/history` | Recent runs with outcome |
@@ -88,7 +89,8 @@ The signature covers the exact transmitted string, so no cross-language canonica
 | `GET /api/workflows` | Workflows |
 | `GET /api/notifications` · `POST /api/notifications/:id/{read,dismiss}` | Attention feed |
 | `GET /api/audit?runId=` | Audit log |
-| `GET/PATCH /api/settings` | Emergency controls |
+| `GET/PATCH /api/settings` | Emergency controls and `aiProvider` (`openai_api` | `codex_cli`) |
+| `GET /api/providers?probe=1` | Provider status (state, summary, hint, details such as auth type and CLI version); `probe` starts and checks Codex |
 | `POST /api/transcribe` (multipart `file`) | Voice → text |
 
 Errors: `{ "error": { "code", "message", "retryable" } }` with codes from `packages/shared/src/errors.ts` (e.g. `AUTH_REQUIRED` 424 means an account must reconnect, `APPROVAL_MISMATCH` 409, `POLICY_DENIED` 403).

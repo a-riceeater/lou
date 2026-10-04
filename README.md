@@ -60,6 +60,8 @@ npm test                                              # packages, server (mocked
 npm run typecheck
 dotnet test --project apps/windows/tests/Lou.Agent.Tests/Lou.Agent.Tests.csproj
 npx tsx scripts/e2e-windows.ts                        # live: real Lou.exe ↔ in-process server
+npx tsx scripts/e2e-codex.ts                          # live: real Codex CLI provider (uses your codex login)
+npx tsx scripts/e2e-windows-codex.ts                  # live: Windows palette → Codex, driven via WebView2 DevTools
 ```
 
 ## Status
@@ -72,6 +74,7 @@ npx tsx scripts/e2e-windows.ts                        # live: real Lou.exe ↔ i
 | Skills, memory, improvement proposals, workflows, event pipeline | Implemented and tested |
 | Instagram (OAuth, webhooks, reply approval) | Implemented; needs a Meta app to exercise live |
 | MCP / Zapier MCP | Implemented (config-driven); needs a live MCP server to exercise |
+| Model providers: OpenAI API or Codex CLI (your ChatGPT/Codex login via `codex app-server`) | Implemented; switchable in Settings; live-tested end to end with the real Codex CLI |
 | Sandboxed generated helper code | Architected only (see SECURITY.md §10); not enabled |
 
-The default model is GPT-6 Luna (`LOU_MODEL=gpt-6-luna`). Change the model ID in configuration if your account names it differently.
+The default model is GPT-6 Luna (`LOU_MODEL=gpt-6-luna`). Change the model ID in configuration if your account names it differently. To use your existing Codex/ChatGPT login instead of an API key, see [docs/MODEL_PROVIDERS.md](docs/MODEL_PROVIDERS.md).
