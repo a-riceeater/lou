@@ -84,6 +84,21 @@ export class SettingsStore {
     this.write("notification_rules", rules);
   }
 
+  /** Integration-owned values (e.g. app credentials entered in the UI). Callers encrypt secrets first. */
+  getValue<T>(key: string, schema: z.ZodType<T>): T | undefined {
+    const row = this.db.select().from(settings).where(eq(settings.key, key)).get();
+    const parsed = schema.safeParse(row?.value);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  setValue(key: string, value: unknown): void {
+    this.write(key, value);
+  }
+
+  deleteValue(key: string): void {
+    this.db.delete(settings).where(eq(settings.key, key)).run();
+  }
+
   private write(key: string, value: unknown): void {
     this.db
       .insert(settings)

@@ -7,6 +7,8 @@ const bool = z
   .enum(["true", "false", "1", "0", "yes", "no"])
   .transform((v) => v === "true" || v === "1" || v === "yes");
 
+export const SPOTIFY_CALLBACK_PATH = "/oauth/spotify/callback";
+
 const EnvSchema = z.object({
   LOU_ENV: z.enum(["development", "production", "test"]).default("development"),
   LOU_HOST: z.string().default("127.0.0.1"),
@@ -42,6 +44,16 @@ const EnvSchema = z.object({
   INSTAGRAM_APP_ID: z.string().optional(),
   INSTAGRAM_APP_SECRET: z.string().optional(),
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+
+  /** Spotify app (Web API) credentials. They can also be entered from the Windows app (Accounts → Spotify → Set up). */
+  SPOTIFY_CLIENT_ID: z.string().optional(),
+  SPOTIFY_CLIENT_SECRET: z.string().optional(),
+  /** Defaults to ${LOU_PUBLIC_URL}/oauth/spotify/callback (localhost becomes 127.0.0.1, which Spotify requires). */
+  SPOTIFY_REDIRECT_URI: z
+    .string()
+    .url()
+    .refine((u) => new URL(u).pathname.endsWith(SPOTIFY_CALLBACK_PATH), `SPOTIFY_REDIRECT_URI must end with ${SPOTIFY_CALLBACK_PATH}`)
+    .optional(),
 
   /** Path to a JSON file describing MCP servers (see docs/INTEGRATIONS.md). */
   LOU_MCP_CONFIG: z.string().optional(),
@@ -85,6 +97,7 @@ export interface Config {
   };
   google: { clientId?: string; clientSecret?: string; pollSeconds: number };
   instagram: { appId?: string; appSecret?: string; verifyToken?: string };
+  spotify: { clientId?: string; clientSecret?: string; redirectUri: string };
   mcpConfigPath?: string;
   improvementEnabled: boolean;
   aiProvider: "openai_api" | "codex_cli";
@@ -142,6 +155,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     },
     google: { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET, pollSeconds: e.LOU_GMAIL_POLL_SECONDS },
     instagram: { appId: e.INSTAGRAM_APP_ID, appSecret: e.INSTAGRAM_APP_SECRET, verifyToken: e.INSTAGRAM_WEBHOOK_VERIFY_TOKEN },
+    spotify: { clientId: e.SPOTIFY_CLIENT_ID || undefined, clientSecret: e.SPOTIFY_CLIENT_SECRET || undefined, redirectUri: e.SPOTIFY_REDIRECT_URI ?? spotifyRedirectUri(publicUrl) },
     mcpConfigPath: e.LOU_MCP_CONFIG ? resolve(e.LOU_MCP_CONFIG) : undefined,
     improvementEnabled: e.LOU_IMPROVEMENT_ENABLED,
     aiProvider: e.AI_PROVIDER,
@@ -153,4 +167,14 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     },
     version: "0.1.0",
   };
+}
+
+/**
+ * Spotify only accepts HTTPS redirect URIs or loopback IP literals; `localhost`
+ * is rejected, so the development default uses 127.0.0.1 instead.
+ */
+export function spotifyRedirectUri(publicUrl: string): string {
+  const url = new URL(`${publicUrl}${SPOTIFY_CALLBACK_PATH}`);
+  if (url.hostname === "localhost") url.hostname = "127.0.0.1";
+  return url.toString();
 }
