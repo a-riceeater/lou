@@ -16,7 +16,7 @@ WAS_ACTIVE=false
 SERVICE_STOPPED=false
 DEPLOYED=false
 UNIT_TEMP=
-COLOR= RESET=
+COLOR='' RESET=''
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then COLOR=$'\033[32m'; RESET=$'\033[0m'; fi
 
 info() { printf '      %s\n' "$*"; }
@@ -66,9 +66,9 @@ failure() {
     error "Setup stopped during: $OPERATION (exit $status)."
     warn 'Data in /var/lib/lou has been preserved. No secret values were logged.'
     if [[ $DEPLOYED == false && -n $PREVIOUS && ! -e $APP && ! -L $APP && -d $PREVIOUS ]]; then
-        mv -T -- "$PREVIOUS" "$APP" || warn 'Could not restore the previous application path.'
+        if mv -T -- "$PREVIOUS" "$APP"; then PREVIOUS=''; else warn 'Could not restore the previous application path.'; fi
     fi
-    if [[ $SERVICE_STOPPED == true && $DEPLOYED == false && $WAS_ACTIVE == true ]]; then
+    if [[ $SERVICE_STOPPED == true && $DEPLOYED == false && $WAS_ACTIVE == true && -d $STAGE ]]; then
         systemctl start lou || warn 'Could not restart the previous service.'
     fi
     [[ -z $STAGE || ! -d $STAGE ]] || warn "Candidate build retained at $STAGE; review before manually removing it."
@@ -104,7 +104,7 @@ as_lou() { runuser -u lou -- env -i HOME=/var/lib/lou PATH=/usr/bin:/usr/local/b
 
 configure() {
     run_step 5 'Configuring Lou'
-    local choice=2 old_key= key= url= name= timezone= provider= api_key= codex_path= model=
+    local choice=2 old_key='' key='' url='' name='' timezone='' provider='' api_key='' codex_path='' model=''
     MCP_DEST=
     : > "$TEMP/env"
     if [[ -f $CONFIG/lou.env ]]; then
@@ -223,7 +223,7 @@ PY
                     prompt input 'Absolute path to MCP JSON (no symlinks)' ''
                     # Import only a regular file with no links in its ancestry.
                     python3 "$SUPPORT" input "$input"
-                    install -m 0600 "$input" "$TEMP/mcp"
+                    python3 "$SUPPORT" import "$input" "$TEMP/mcp"
                     local refs ref
                     refs=$(python3 "$SUPPORT" refs "$TEMP/mcp")
                     while IFS= read -r ref; do
@@ -329,6 +329,7 @@ deploy() {
     UNIT_TEMP=
     systemctl daemon-reload
     systemctl enable lou
+    systemctl reset-failed lou
     OPERATION='starting Lou (see journalctl -u lou)'
     systemctl restart lou
 }
@@ -357,6 +358,7 @@ verify() {
     else
         warn 'Lou is healthy on 127.0.0.1:8787; the external HTTPS endpoint is not ready yet.'
     fi
+    systemctl is-active --quiet lou || die 'Lou exited during verification.'
     run_step 8 'Finished'
     success 'Lou installed successfully'
     printf '\nService:  active and enabled\nData:     /var/lib/lou\nConfig:   /etc/lou/lou.env\nLogs:     sudo journalctl -u lou -f\n'
@@ -371,7 +373,8 @@ preflight() {
     run_step 1 'Checking system'
     [[ -f /etc/os-release ]] || die 'Missing /etc/os-release.'
     # This root-owned OS metadata is not an administrator-supplied env file.
-    local ID= VERSION_ID= PRETTY_NAME=
+    local ID='' VERSION_ID='' PRETTY_NAME=''
+    # shellcheck source=/dev/null
     source /etc/os-release
     [[ $ID == ubuntu ]] || die 'Only Ubuntu is supported.'
     case $VERSION_ID in 22.04|24.04|26.04) ;; *) die "Unsupported Ubuntu release: $VERSION_ID" ;; esac
@@ -440,7 +443,7 @@ main() {
     apt-get update
     apt-get install -y ca-certificates curl git build-essential python3
     check_path "$CONFIG"
-    install -d -o root -g root -m 0750 "$CONFIG"
+    if [[ ! -d $CONFIG ]]; then install -d -o root -g root -m 0700 "$CONFIG"; fi
     TEMP=$(mktemp -d /etc/lou/.setup.XXXXXXXX)
     if [[ $NEED_NODE == true ]]; then
         curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -467,6 +470,16 @@ main() {
     # Only the directory itself; never recursively alter database/skill contents.
     install -d -o lou -g lou -m 0700 "$DATA"
     install -d -o root -g lou -m 0750 "$CONFIG"
+    if [[ -e $DATA/lou.db ]]; then
+        [[ -f $DATA/lou.db ]] || die 'Existing database path is not a regular file.'
+        as_lou test -r "$DATA/lou.db" && as_lou test -w "$DATA/lou.db" || die 'Existing database must be readable/writable by lou; review its ownership manually.'
+    fi
+    for path in "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace"; do
+        if [[ -e $path ]]; then
+            [[ -d $path ]] || die "Existing runtime path is not a directory: $path"
+            as_lou test -r "$path" && as_lou test -w "$path" && as_lou test -x "$path" || die "Runtime directory is not accessible to lou; review manually: $path"
+        fi
+    done
 
     run_step 4 'Building a candidate application'
     STAGE=$(mktemp -d /opt/.lou-build.XXXXXXXX)

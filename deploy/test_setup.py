@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -48,7 +49,8 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(support.public_url(value), value.rstrip('/'))
         for value in ['http://localhost', 'https://', 'https://user:secret@host', 'https://a/b',
                       'https://a?x=1', 'https://a#fragment', 'https://a:99999', 'https://a b',
-                      'https://a\\b', 'https://-bad.example', 'https://a..b', '//example.com']:
+                      'https://a\\b', 'https://-bad.example', 'https://a..b', '//example.com',
+                      'https://999.999.999.999', 'https://host:', 'HTTPS://example.com']:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 support.public_url(value)
 
@@ -63,9 +65,37 @@ class SetupTests(unittest.TestCase):
             support.trusted_path(str(self.root / 'link'))
         (self.root / 'regular').write_text('ok')
         support.input_file(str(self.root / 'regular'))
+        with os.fdopen(support.open_input(str(self.root / 'regular'))) as file:
+            self.assertEqual(file.read(), 'ok')
         for value in [str(self.root), str(self.root / 'missing'), str(self.root / '../other')]:
             with self.assertRaises(ValueError):
                 support.input_file(value)
+        with self.assertRaises(ValueError):
+            support.open_input(str(self.root / 'link/regular'))
+
+    @unittest.skipUnless((DEPLOY.parent / 'node_modules/tsx').is_dir() and shutil.which('node'),
+                         'npm ci and Node are needed for the real Lou schema check')
+    def test_actual_lou_schema_and_validator_environment(self):
+        import base64
+        values = {'LOU_ENV': 'production', 'LOU_HOST': '127.0.0.1', 'LOU_PORT': '8787',
+                  'LOU_PUBLIC_URL': 'https://lou.example.com', 'LOU_DATA_DIR': '/var/lib/lou',
+                  'LOU_DB_PATH': '/var/lib/lou/lou.db', 'LOU_SKILLS_DIR': '/opt/lou/skills',
+                  'LOU_MASTER_KEY': base64.b64encode(bytes(range(32))).decode(),
+                  'AI_PROVIDER': 'openai_api', 'OPENAI_API_KEY': 'test-key',
+                  'NODE_OPTIONS': '--require=/unexpected/injection.js'}
+        original_run = subprocess.run
+        def current_user_run(command, **kwargs):
+            self.assertNotIn('NODE_OPTIONS', kwargs['env'])
+            self.assertEqual(kwargs.pop('user'), 'lou')
+            self.assertEqual(kwargs.pop('group'), 'lou')
+            self.assertEqual(kwargs.pop('extra_groups'), ['lou'])
+            return original_run([shutil.which('node'), *command[1:]], **kwargs)
+        with patch.object(subprocess, 'run', side_effect=current_user_run):
+            support.validate_env(self.env(values), str(DEPLOY.parent))
+            with self.assertRaises(ValueError):
+                support.validate_env(self.env({**values, 'LOU_GMAIL_POLL_SECONDS': '0'}), str(DEPLOY.parent))
+            with self.assertRaises(ValueError):
+                support.validate_env(self.env({**values, 'LOU_MASTER_KEY': 'invalid'}), str(DEPLOY.parent))
 
     def test_trusted_paths_require_root_ownership_and_restrictive_mode(self):
         # Simulate an otherwise trusted host without requiring root privileges.
@@ -190,7 +220,7 @@ curl() { printf '{"status":"degraded","db":"error"}'; }
         import types
         owner = types.SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
         with patch.object(support.pwd, 'getpwnam', return_value=owner), \
-                patch.object(os, 'fwalk', return_value=[('/opt/.lou-build.test', [], ['escape'], fd)]):
+                patch.object(os, 'fwalk', return_value=[(str(build), [], ['escape'], fd)]):
             with self.assertRaises(ValueError):
                 support.freeze_tree('/opt/.lou-build.test', 'root')
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)

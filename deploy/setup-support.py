@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Installer primitives; never execute environment-file contents."""
 import json
+import ipaddress
 import os
 from pathlib import Path
 import pwd
@@ -30,7 +31,7 @@ def trusted_path(value):
 
 def public_url(value):
     u = urlsplit(value)
-    if (u.scheme != 'https' or not u.hostname or u.username or u.password
+    if (not value.startswith('https://') or u.scheme != 'https' or not u.hostname or u.username or u.password
             or u.query or u.fragment or u.path not in ('', '/')
             or re.search(r'[\s\\\x00-\x1f\x7f]', value)):
         raise ValueError('enter an HTTPS origin, without credentials, path, query or fragment')
@@ -38,6 +39,10 @@ def public_url(value):
         raise ValueError('invalid port')
     if not re.fullmatch(r'[A-Za-z0-9.:\[\]-]+', u.netloc):
         raise ValueError('invalid hostname')
+    if u.netloc.endswith(':') or len(u.hostname) > 253:
+        raise ValueError('invalid hostname or empty port')
+    if ':' in u.hostname or re.fullmatch(r'[0-9.]+', u.hostname):
+        ipaddress.ip_address(u.hostname)
     if ':' not in u.hostname:
         labels = u.hostname.split('.')
         if any(not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', x) for x in labels):
@@ -111,7 +116,7 @@ def copy_source(source, destination):
         target = destination / p
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
         # Opening with NOFOLLOW also rejects a last-moment source-file symlink.
-        fd = os.open(origin, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = open_input(str(origin))
         with os.fdopen(fd, 'rb') as reader:
             mode = os.fstat(reader.fileno())
             if not stat.S_ISREG(mode.st_mode):
@@ -131,6 +136,26 @@ def input_file(value):
         raise ValueError('symlink input is not supported')
     if not path.is_file():
         raise ValueError('input must be a regular file')
+
+
+def open_input(value):
+    input_file(value)
+    # Open every ancestor without following links; a concurrent rename cannot
+    # redirect a privileged read through a newly substituted directory symlink.
+    parts = Path(value).parts[1:]
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        result = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        if not stat.S_ISREG(os.fstat(result).st_mode):
+            os.close(result)
+            raise ValueError('input changed into a special file')
+        return result
+    finally:
+        os.close(fd)
 
 
 def freeze_tree(value, owner):
@@ -252,6 +277,9 @@ def main():
         freeze_tree(*args)
     elif action == 'input':
         input_file(args[0])
+    elif action == 'import':
+        with os.fdopen(open_input(args[0]), 'rb') as reader, open(args[1], 'xb') as writer:
+            shutil.copyfileobj(reader, writer)
     elif action == 'refs':
         for key in sorted(set(re.findall(r'\$\{([A-Z0-9_]+)\}', Path(args[0]).read_text()))):
             if not re.fullmatch('[A-Z_][A-Z0-9_]*', key):
@@ -264,6 +292,8 @@ def main():
     elif action == 'get':
         print(read_env(args[0]).get(args[1], ''))
     elif action == 'cli':
+        if os.getuid() != pwd.getpwnam('lou').pw_uid or os.getuid() == 0:
+            raise ValueError('run the administrative launcher as the lou service user')
         env = {**os.environ, **read_env('/etc/lou/lou.env')}
         os.chdir('/opt/lou')
         os.execve('/usr/bin/node', ['node', '/opt/lou/apps/server/dist/cli.js', *args], env)
@@ -282,4 +312,10 @@ if __name__ == '__main__':
         # Inputs may contain credentials; do not print exception values.
         print('Validation failed for ' + (sys.argv[1] if len(sys.argv) > 1 else 'operation')
               + '; no input values were logged.', file=sys.stderr)
+        if len(sys.argv) > 1 and sys.argv[1] == 'validate':
+            print('Use the documented production paths, an HTTPS origin, valid Lou settings, '
+                  'a 32-byte base64 master key and credentials for the selected provider.', file=sys.stderr)
+        elif len(sys.argv) > 1 and sys.argv[1] == 'path':
+            print('System paths must be absolute, root-owned, non-writable by other users, '
+                  'and free of symlinks/hard-linked files; review with an administrator.', file=sys.stderr)
         sys.exit(1)
