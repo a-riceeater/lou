@@ -14,6 +14,8 @@ export const REDACT_PATHS = [
   "*.deviceToken",
   "*.commandKey",
   "*.clientSecret",
+  "*.clientSecretEnc",
+  "*.authorization",
   "*.client_secret",
   "*.password",
   "*.apiKey",

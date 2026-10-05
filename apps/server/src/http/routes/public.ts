@@ -21,7 +21,7 @@ export async function publicRoutes(app: FastifyInstance, s: Services): Promise<v
       provider: s.providers.active(),
       model: s.providers.modelLabel(),
       codex: s.codex.snapshot().state,
-      integrations: { gmail: s.google.configured, instagram: s.instagram.configured },
+      integrations: { gmail: s.google.configured, instagram: s.instagram.configured, spotify: s.spotify.configured },
     };
   });
 
@@ -44,6 +44,18 @@ export async function publicRoutes(app: FastifyInstance, s: Services): Promise<v
       const e = toLouError(err);
       request.log.warn({ code: e.code }, "google oauth callback failed");
       return reply.status(400).type("text/html").send(resultPage("Couldn't connect Gmail", e.message, false));
+    }
+  });
+
+  app.get("/oauth/spotify/callback", async (request, reply) => {
+    const q = request.query as { code?: string; state?: string; error?: string };
+    try {
+      const { displayName } = await s.spotify.handleCallback(q);
+      return reply.type("text/html").send(resultPage("Spotify connected", `${displayName} is connected. You can close this tab and ask Lou to play something.`, true));
+    } catch (err) {
+      const e = toLouError(err);
+      request.log.warn({ code: e.code }, "spotify oauth callback failed");
+      return reply.status(400).type("text/html").send(resultPage("Couldn't connect Spotify", e.message, false));
     }
   });
 

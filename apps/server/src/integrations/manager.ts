@@ -30,7 +30,7 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 const REFRESH_SKEW_MS = 2 * 60 * 1000;
 
 /**
- * Connected accounts (Gmail, Instagram, MCP) and their OAuth credentials.
+ * Connected accounts (Gmail, Instagram, Spotify, MCP) and their OAuth credentials.
  * Tokens are encrypted at rest and only ever leave this module as short-lived
  * values handed to integration clients — never to the model or the client UI.
  */
@@ -262,5 +262,5 @@ export class IntegrationManager {
 }
 
 export function providerLabel(provider: string): string {
-  return provider === "google" ? "Gmail" : provider === "instagram" ? "Instagram" : provider.toUpperCase();
+  return provider === "google" ? "Gmail" : provider === "instagram" ? "Instagram" : provider === "spotify" ? "Spotify" : provider.toUpperCase();
 }

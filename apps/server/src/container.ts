@@ -43,6 +43,9 @@ import type { FetchLike } from "./integrations/http";
 import { InstagramConnector } from "./integrations/instagram/connector";
 import { IntegrationManager } from "./integrations/manager";
 import { McpManager } from "./integrations/mcp/manager";
+import { SpotifyConnector } from "./integrations/spotify/connector";
+import { SpotifyPlayer } from "./integrations/spotify/player";
+import { registerSpotifyTools } from "./integrations/spotify/tools";
 import { ImprovementEvaluator } from "./learning/evaluator";
 import type { Logger } from "./logger";
 import { MemoryStore } from "./memory/store";
@@ -57,6 +60,8 @@ export interface ServiceOverrides {
   embeddings?: EmbeddingProvider | null;
   transcriber?: Transcriber | null;
   db?: Db;
+  /** Spotify client tuning (tests shorten rate-limit waits). */
+  spotify?: { maxRateLimitWaitMs?: number; sleep?: (ms: number) => Promise<void> };
   /** Codex App Server overrides (tests point this at a mock app server). */
   codex?: { explicitPath?: string; env?: NodeJS.ProcessEnv };
 }
@@ -88,6 +93,8 @@ export interface Services {
   integrations: IntegrationManager;
   google: GoogleConnector;
   instagram: InstagramConnector;
+  spotify: SpotifyConnector;
+  spotifyPlayer: SpotifyPlayer;
   mcp: McpManager;
   events: EventManager;
   notifications: NotificationManager;
@@ -170,6 +177,16 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     logger,
     fetchImpl,
   );
+  const spotify = new SpotifyConnector(
+    { clientId: config.spotify.clientId, clientSecret: config.spotify.clientSecret, redirectUri: config.spotify.redirectUri, api: overrides.spotify },
+    integrations,
+    settings,
+    vault,
+    audit,
+    logger,
+    fetchImpl,
+  );
+  const spotifyPlayer = new SpotifyPlayer(spotify, integrations);
   const mcp = new McpManager(registry, integrations, logger);
 
   const userOfRun = (runId: string | undefined) => (runId ? db.select({ u: agentRuns.userId }).from(agentRuns).where(eq(agentRuns.id, runId)).get()?.u : undefined);
@@ -195,6 +212,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
 
   registerGmailTools(registry, integrations, fetchImpl);
   instagram.registerTools(registry);
+  registerSpotifyTools(registry, spotifyPlayer);
   registerInternalTools(registry, { memory, skills, approvals: approvals_, workflows, gateway });
 
   const improvement = config.improvementEnabled ? new ImprovementEvaluator(db, model, registry, skills, memory, runs, settings, audit, logger) : undefined;
@@ -277,6 +295,8 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     integrations,
     google,
     instagram,
+    spotify,
+    spotifyPlayer,
     mcp,
     events,
     notifications,

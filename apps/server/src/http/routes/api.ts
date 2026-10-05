@@ -4,6 +4,8 @@ import {
   CreateRunRequestSchema,
   MemoryTypeSchema,
   ResolveApprovalRequestSchema,
+  SpotifyAppCredentialsRequestSchema,
+  SpotifyPlayerActionRequestSchema,
   UpdateMemoryRequestSchema,
   UpdateSettingsRequestSchema,
   type MeResponse,
@@ -82,7 +84,7 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
   // ---- Accounts ----------------------------------------------------------------
   app.get("/api/accounts", async (request) => {
     const d = requireDevice(request);
-    return { items: s.integrations.list(d.userId), available: { google: s.google.configured, instagram: s.instagram.configured } };
+    return { items: s.integrations.list(d.userId), available: { google: s.google.configured, instagram: s.instagram.configured, spotify: s.spotify.configured } };
   });
 
   app.post("/api/accounts/google/connect", async (request) => {
@@ -97,12 +99,19 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
     return s.instagram.startConnect(d.userId);
   });
 
+  app.post("/api/accounts/spotify/connect", async (request) => {
+    const d = requireDevice(request);
+    s.audit.record({ userId: d.userId, actorType: "device", actorId: d.deviceId, action: "account.connect_started", details: { provider: "spotify" } });
+    return s.spotify.startConnect(d.userId);
+  });
+
   app.post("/api/accounts/:id/check", async (request) => {
     const d = requireDevice(request);
     const { id } = IdParam.parse(request.params);
     const row = s.integrations.getRow(id);
     if (!row || row.userId !== d.userId) throw new LouError("NOT_FOUND", "Account not found.");
     if (row.provider === "google") await s.google.checkHealth(id).catch(() => undefined);
+    if (row.provider === "spotify") await s.spotify.checkHealth(id).catch(() => undefined);
     if (row.provider === "instagram") {
       await s.instagram
         .client(id)
@@ -117,6 +126,38 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
     const d = requireDevice(request);
     const { id } = IdParam.parse(request.params);
     s.integrations.disconnect(d.userId, id, { type: "device", id: d.deviceId });
+    return { ok: true };
+  });
+
+  // ---- Spotify (setup, status, and the compact Now Playing remote) ---------------
+  app.get("/api/spotify", async (request) => s.spotify.status(requireDevice(request).userId));
+
+  app.put("/api/spotify/app", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request) => {
+    const d = requireDevice(request);
+    await s.spotify.saveAppCredentials(d.userId, SpotifyAppCredentialsRequestSchema.parse(request.body), { type: "device", id: d.deviceId });
+    return s.spotify.status(d.userId);
+  });
+
+  app.delete("/api/spotify/app", async (request) => {
+    const d = requireDevice(request);
+    s.spotify.clearAppCredentials(d.userId, { type: "device", id: d.deviceId });
+    return s.spotify.status(d.userId);
+  });
+
+  // Served from a short shared cache so polling clients never hammer Spotify.
+  app.get("/api/spotify/player", async (request) => s.spotifyPlayer.playerView(requireDevice(request).userId));
+
+  app.post("/api/spotify/player", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request) => {
+    const d = requireDevice(request);
+    const body = SpotifyPlayerActionRequestSchema.parse(request.body);
+    if (body.action === "play") await s.spotifyPlayer.play(d.userId, {});
+    else if (body.action === "pause") await s.spotifyPlayer.pause(d.userId);
+    else if (body.action === "next") await s.spotifyPlayer.next(d.userId);
+    else if (body.action === "previous") await s.spotifyPlayer.previous(d.userId);
+    else {
+      if (body.volumePercent === undefined) throw new LouError("VALIDATION_FAILED", "volumePercent is required.");
+      await s.spotifyPlayer.setVolume(d.userId, { volumePercent: body.volumePercent });
+    }
     return { ok: true };
   });
 
