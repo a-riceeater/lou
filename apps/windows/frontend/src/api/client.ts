@@ -17,6 +17,9 @@ import type {
   SettingsView,
   SkillDetail,
   SkillSummary,
+  SpotifyPlayerActionRequest,
+  SpotifyPlayerView,
+  SpotifyStatus,
   WorkflowSummary,
 } from "@lou/protocol";
 import { bridge, BridgeError } from "../bridge/bridge";
@@ -45,10 +48,16 @@ export const api = {
   resolveApproval: (id: string, decision: "approve" | "reject", actionHash: string, edits?: Record<string, string>) =>
     call<ApprovalView>("POST", `/api/approvals/${id}/resolve`, { decision, actionHash, ...(edits && Object.keys(edits).length ? { edits } : {}) }),
 
-  accounts: () => call<{ items: AccountView[]; available: { google: boolean; instagram: boolean } }>("GET", "/api/accounts"),
-  connectAccount: (provider: "google" | "instagram") => call<ConnectAccountResponse>("POST", `/api/accounts/${provider}/connect`),
+  accounts: () => call<{ items: AccountView[]; available: { google: boolean; instagram: boolean; spotify?: boolean } }>("GET", "/api/accounts"),
+  connectAccount: (provider: "google" | "instagram" | "spotify") => call<ConnectAccountResponse>("POST", `/api/accounts/${provider}/connect`),
   checkAccount: (id: string) => call<AccountView>("POST", `/api/accounts/${id}/check`),
   disconnectAccount: (id: string) => call<{ ok: true }>("DELETE", `/api/accounts/${id}`),
+
+  spotify: () => call<SpotifyStatus>("GET", "/api/spotify"),
+  saveSpotifyApp: (clientId: string, clientSecret: string) => call<SpotifyStatus>("POST", "/api/spotify/app", { clientId, clientSecret }),
+  spotifyPlayer: () => call<SpotifyPlayerView>("GET", "/api/spotify/player"),
+  spotifyControl: (action: SpotifyPlayerActionRequest["action"], volumePercent?: number) =>
+    call<{ ok: true }>("POST", "/api/spotify/player", { action, ...(volumePercent === undefined ? {} : { volumePercent }) }),
 
   devices: () => call<{ items: DeviceView[] }>("GET", "/api/devices").then((r) => r.items),
   pairingCode: () => call<PairingCodeResponse>("POST", "/api/devices/pairing-codes"),

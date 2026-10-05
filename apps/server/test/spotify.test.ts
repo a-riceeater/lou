@@ -49,11 +49,11 @@ describe("Spotify setup and connection", () => {
     // An agent request gets an actionable path instead of an internal error.
     expect(await failure("spotify.play", { query: "music" })).toMatchObject({ code: "NOT_CONFIGURED", message: expect.stringContaining("Accounts → Spotify") });
 
-    const bad = await server.app.inject({ method: "PUT", url: "/api/spotify/app", headers: auth, payload: { clientId: fake.clientId, clientSecret: "c".repeat(32) } });
+    const bad = await server.app.inject({ method: "POST", url: "/api/spotify/app", headers: auth, payload: { clientId: fake.clientId, clientSecret: "c".repeat(32) } });
     expect(bad.statusCode).toBe(503);
     expect(bad.json().error.message).toContain("rejected");
 
-    const saved = await server.app.inject({ method: "PUT", url: "/api/spotify/app", headers: auth, payload: { clientId: fake.clientId, clientSecret: fake.clientSecret } });
+    const saved = await server.app.inject({ method: "POST", url: "/api/spotify/app", headers: auth, payload: { clientId: fake.clientId, clientSecret: fake.clientSecret } });
     expect(saved.statusCode).toBe(200);
     expect(saved.json()).toMatchObject({ state: "disconnected", configSource: "server", clientId: fake.clientId });
     expect(saved.body).not.toContain(fake.clientSecret);

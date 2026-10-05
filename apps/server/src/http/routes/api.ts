@@ -132,7 +132,7 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
   // ---- Spotify (setup, status, and the compact Now Playing remote) ---------------
   app.get("/api/spotify", async (request) => s.spotify.status(requireDevice(request).userId));
 
-  app.put("/api/spotify/app", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request) => {
+  app.post("/api/spotify/app", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request) => {
     const d = requireDevice(request);
     await s.spotify.saveAppCredentials(d.userId, SpotifyAppCredentialsRequestSchema.parse(request.body), { type: "device", id: d.deviceId });
     return s.spotify.status(d.userId);
