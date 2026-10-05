@@ -52,6 +52,7 @@ dotnet build src/Lou.App/Lou.App.csproj -p:Platform=x64   # also builds the Reac
 Enter the server address and pairing code, add Gmail under **Accounts**, then press <kbd>Alt</kbd>+<kbd>Space</kbd>.
 
 Full details: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Production on Ubuntu with systemd: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+After cloning on Ubuntu, run `sudo ./deploy/setup.sh` for interactive service setup. HTTPS termination remains a separate reverse proxy/tunnel step.
 
 ## Tests
 
