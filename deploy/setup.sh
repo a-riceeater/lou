@@ -207,6 +207,18 @@ PY
             write_value INSTAGRAM_WEBHOOK_VERIFY_TOKEN "$api_key"
             unset api_key
         fi
+        if confirm 'Configure Spotify app credentials now (or later with deploy/setup-spotify.sh)?'; then
+            info "Spotify app (developer.spotify.com/dashboard, Web API) redirect URI: $url/oauth/spotify/callback"
+            while true; do
+                prompt name 'Spotify client ID' ''
+                if printf '%s' "$name" | python3 "$SUPPORT" spotify-id 2>/dev/null; then break; fi
+                warn 'Enter the Client ID from the app''s Basic Information page.'
+            done
+            write_value SPOTIFY_CLIENT_ID "$name"
+            prompt_secret api_key 'Spotify client secret'
+            write_value SPOTIFY_CLIENT_SECRET "$api_key"
+            unset api_key
+        fi
         if confirm 'Configure an MCP configuration file now?'; then
             info '1. Install the example for later editing (not enabled)'
             info '2. Import and enable an existing JSON file'
@@ -365,6 +377,7 @@ verify() {
     info 'Configure your HTTPS reverse proxy/tunnel to 127.0.0.1:8787, including /ws upgrades.'
     info 'Pair your first device (code expires after 10 minutes):'
     info 'sudo -u lou -H python3 /opt/lou/deploy/setup-support.py cli pair'
+    info 'Optional: sudo ./deploy/setup-spotify.sh configures Spotify playback control.'
     info 'Back up /var/lib/lou and /etc/lou/lou.env, including the master key.'
     [[ -z $PREVIOUS ]] || info "Previous application: $PREVIOUS (retained; remove only after reviewing)."
 }

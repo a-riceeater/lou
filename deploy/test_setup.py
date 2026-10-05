@@ -163,6 +163,53 @@ class SetupTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('supersecret', result.stdout + result.stderr)
 
+    def test_env_set_replaces_or_removes_one_variable_only(self):
+        file = self.root / 'env'
+        file.write_text('# Spotify\nLOU_ENV=production\nSPOTIFY_CLIENT_ID=old\nLOU_PORT="8787"\n')
+        support.set_env(file, 'SPOTIFY_CLIENT_ID', 'new$id')
+        support.set_env(file, 'SPOTIFY_CLIENT_SECRET', 'secret')
+        self.assertEqual(support.read_env(file), {'LOU_ENV': 'production', 'LOU_PORT': '8787', 'SPOTIFY_CLIENT_ID': 'new$id', 'SPOTIFY_CLIENT_SECRET': 'secret'})
+        self.assertTrue(file.read_text().startswith('# Spotify\nLOU_ENV=production\nLOU_PORT="8787"\n'))
+        support.set_env(file, 'SPOTIFY_CLIENT_SECRET', None)
+        self.assertNotIn('SPOTIFY_CLIENT_SECRET', support.read_env(file))
+        for key, value in [('bad-key', 'x'), ('SPOTIFY_CLIENT_ID', 'line\nbreak')]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                support.set_env(file, key, value)
+
+    def test_spotify_redirect_uri_and_credential_format(self):
+        env = self.env({'LOU_PUBLIC_URL': 'https://lou.example.com'})
+        self.assertEqual(support.spotify_redirect(env), 'https://lou.example.com/oauth/spotify/callback')
+        custom = self.env({'LOU_PUBLIC_URL': 'https://lou.example.com', 'SPOTIFY_REDIRECT_URI': 'https://music.example.com/oauth/spotify/callback'})
+        self.assertEqual(support.spotify_redirect(custom), 'https://music.example.com/oauth/spotify/callback')
+        self.assertEqual(support.spotify_credential('a' * 32), 'a' * 32)
+        for value in ['', 'short', 'has space ' + 'a' * 20, 'a' * 65, 'quote"' + 'a' * 20]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                support.spotify_credential(value)
+
+    def test_spotify_verify_maps_spotify_responses_without_leaking_the_secret(self):
+        import io
+        import urllib.error
+        seen = []
+
+        def opener(result):
+            def open_(request, timeout):
+                seen.append(request)
+                if isinstance(result, Exception):
+                    raise result
+                return io.BytesIO(json.dumps(result).encode())
+            return open_
+        client_id, secret = 'a' * 32, 'b' * 32
+        self.assertTrue(support.spotify_verify(client_id, secret, opener({'access_token': 'x'})))
+        request = seen[0]
+        self.assertEqual(request.full_url, 'https://accounts.spotify.com/api/token')
+        self.assertNotIn(secret, request.full_url + request.data.decode())
+        self.assertTrue(request.get_header('Authorization').startswith('Basic '))
+        rejected = urllib.error.HTTPError(support.SPOTIFY_TOKEN_URL, 400, 'Bad Request', {}, io.BytesIO(b'{"error":"invalid_client"}'))
+        self.assertFalse(support.spotify_verify(client_id, secret, opener(rejected)))
+        self.assertIsNone(support.spotify_verify(client_id, secret, opener(urllib.error.URLError('offline'))))
+        with self.assertRaises(ValueError):
+            support.spotify_verify('bad id', secret, opener({'access_token': 'x'}))
+
     def shell(self, code, stdin=''):
         return subprocess.run(['bash', '-c', 'source "$1"; ' + code, 'test', str(DEPLOY / 'setup.sh')],
                               input=stdin, text=True, capture_output=True)

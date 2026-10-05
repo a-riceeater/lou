@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Installer primitives; never execute environment-file contents."""
+import base64
 import json
 import ipaddress
 import os
@@ -10,6 +11,9 @@ import shutil
 import stat
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from urllib.parse import urlsplit
 
 
@@ -89,6 +93,55 @@ def read_env(path):
         quote(value)
         result[key] = value
     return result
+
+
+def set_env(path, key, value):
+    """Replaces (or with value None removes) one variable, keeping every other line as is."""
+    if not re.fullmatch(r'[A-Z_][A-Z0-9_]*', key):
+        raise ValueError('invalid environment variable name')
+    path = Path(path)
+    read_env(path)
+    lines = [line for line in path.read_text().splitlines() if line.strip().partition('=')[0].strip() != key]
+    if value is not None:
+        lines.append(key + '=' + quote(value))
+    path.write_text('\n'.join(lines) + '\n')
+    read_env(path)
+
+
+SPOTIFY_CALLBACK = '/oauth/spotify/callback'
+SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token'
+
+
+def spotify_redirect(env_path):
+    """The exact redirect URI Lou will send; it must be registered in the Spotify dashboard."""
+    env = read_env(env_path)
+    if env.get('SPOTIFY_REDIRECT_URI'):
+        return env['SPOTIFY_REDIRECT_URI']
+    return public_url(env.get('LOU_PUBLIC_URL', '')) + SPOTIFY_CALLBACK
+
+
+def spotify_credential(value):
+    if not re.fullmatch(r'[A-Za-z0-9]{16,64}', value):
+        raise ValueError('Spotify client IDs and secrets are 16-64 letters and digits')
+    return value
+
+
+def spotify_verify(client_id, client_secret, opener=urllib.request.urlopen):
+    """True if Spotify accepts the app credentials, False if it rejects them; None if unreachable."""
+    spotify_credential(client_id)
+    spotify_credential(client_secret)
+    token = base64.b64encode(f'{client_id}:{client_secret}'.encode()).decode()
+    request = urllib.request.Request(SPOTIFY_TOKEN_URL, method='POST',
+                                     data=urllib.parse.urlencode({'grant_type': 'client_credentials'}).encode(),
+                                     headers={'Authorization': 'Basic ' + token,
+                                              'Content-Type': 'application/x-www-form-urlencoded'})
+    try:
+        with opener(request, timeout=15) as response:
+            return bool(json.load(response).get('access_token'))
+    except urllib.error.HTTPError as err:
+        return False if err.code in (400, 401) else None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
 
 
 def copy_source(source, destination):
@@ -255,7 +308,7 @@ def validate_env(path, app):
     # Unknown variables (e.g. NODE_OPTIONS/LD_PRELOAD) must not inject code into
     # the configuration validator. The service still gets administrator settings.
     clean = {'PATH': '/usr/bin:/usr/local/bin:/bin', 'HOME': '/var/lib/lou'}
-    clean.update({k: v for k, v in env.items() if k.startswith(('LOU_', 'OPENAI_', 'GOOGLE_', 'INSTAGRAM_'))
+    clean.update({k: v for k, v in env.items() if k.startswith(('LOU_', 'OPENAI_', 'GOOGLE_', 'INSTAGRAM_', 'SPOTIFY_'))
                   or k in ('AI_PROVIDER', 'CODEX_HOME', 'CODEX_PATH')})
     check = subprocess.run(['/usr/bin/node', '--import', 'tsx', '--input-type=module',
                             '-e', code], cwd=app, env=clean, capture_output=True,
@@ -299,6 +352,24 @@ def main():
         env = {**os.environ, **read_env('/etc/lou/lou.env')}
         os.chdir('/opt/lou')
         os.execve('/usr/bin/node', ['node', '/opt/lou/apps/server/dist/cli.js', *args], env)
+    elif action == 'env-set':
+        # The value arrives on stdin, never in process arguments.
+        set_env(args[0], args[1], sys.stdin.read())
+    elif action == 'env-unset':
+        set_env(args[0], args[1], None)
+    elif action == 'spotify-redirect':
+        print(spotify_redirect(args[0]))
+    elif action == 'spotify-id':
+        spotify_credential(sys.stdin.read().strip())
+    elif action == 'spotify-verify':
+        client_id, _, client_secret = sys.stdin.read().partition('\n')
+        result = spotify_verify(client_id.strip(), client_secret.strip())
+        # 0 accepted, 1 rejected/invalid, 2 Spotify unreachable.
+        sys.exit(0 if result else 2 if result is None else 1)
+    elif action == 'spotify-health':
+        data = json.load(sys.stdin)
+        if data.get('status') != 'ok' or not data.get('integrations', {}).get('spotify'):
+            raise ValueError('Lou is not reporting Spotify as configured')
     elif action == 'health':
         data = json.load(sys.stdin)
         if data.get('status') != 'ok' or data.get('db') != 'ok':
