@@ -9,6 +9,7 @@ import { createServices, type Services } from "../src/container";
 import { buildApp } from "../src/http/app";
 import { createLogger } from "../src/logger";
 import { generateMasterKey } from "../src/security/crypto";
+import type { FakeSpotify } from "./spotify-fake";
 
 export const MOCK_CODEX = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packages", "agent", "test", "fixtures", "mock-codex-app-server.mjs");
 
@@ -142,6 +143,12 @@ export async function startTestServer(
     codexScript?: Record<string, unknown>;
     /** Pass null to leave the OpenAI API provider unconfigured. */
     apiModel?: null;
+    /** Fake Spotify accounts service + Web API. */
+    spotify?: FakeSpotify;
+    /** With a fake Spotify: put its app credentials in the environment (default) or leave setup to the API. */
+    spotifyEnv?: boolean;
+    /** Records Spotify client back-off waits instead of sleeping. */
+    sleeps?: number[];
   } = {},
 ): Promise<TestServer> {
   const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), "lou-test-"));
@@ -155,6 +162,7 @@ export async function startTestServer(
     LOU_USER_NAME: "Alex",
     LOU_TIMEZONE: "UTC",
     LOU_IMPROVEMENT_ENABLED: "false",
+    ...(options.spotify && options.spotifyEnv !== false ? { SPOTIFY_CLIENT_ID: options.spotify.clientId, SPOTIFY_CLIENT_SECRET: options.spotify.clientSecret } : {}),
     ...options.env,
   });
   const google = options.google ?? new FakeGoogle();
@@ -166,7 +174,11 @@ export async function startTestServer(
     codex = { explicitPath: MOCK_CODEX, env: { ...process.env, MOCK_CODEX_SCRIPT: scriptPath, MOCK_CODEX_STATE: join(dataDir, "codex-state.json") } };
   }
   const services = createServices(config, createLogger("silent" as "fatal", false), {
-    fetch: google.fetch as typeof fetch,
+    fetch: ((input: string | URL | Request, init?: RequestInit) => {
+      const host = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).host;
+      return options.spotify && host.endsWith("spotify.com") ? options.spotify.fetch(input, init) : google.fetch(input, init);
+    }) as typeof fetch,
+    spotify: { sleep: async (ms) => void options.sleeps?.push(ms) },
     model: options.apiModel === null ? undefined : model,
     embeddings: null,
     transcriber: null,
@@ -225,4 +237,14 @@ export function waitForBus<K extends "run.completed" | "approval.requested" | "a
       resolve(payload);
     });
   });
+}
+
+/** Connects Spotify through the real OAuth callback route (with the fake accounts service). */
+export async function connectSpotify(server: TestServer, token: string): Promise<string> {
+  const start = await server.app.inject({ method: "POST", url: "/api/accounts/spotify/connect", headers: { authorization: `Bearer ${token}` } });
+  if (start.statusCode !== 200) throw new Error(`spotify connect failed: ${start.body}`);
+  const state = new URL(start.json().authUrl).searchParams.get("state")!;
+  const cb = await server.app.inject({ method: "GET", url: `/oauth/spotify/callback?code=good-code&state=${encodeURIComponent(state)}` });
+  if (cb.statusCode !== 200) throw new Error(`spotify oauth callback failed: ${cb.body}`);
+  return server.services.integrations.list(server.services.owner.id).find((a) => a.provider === "spotify")!.id;
 }
