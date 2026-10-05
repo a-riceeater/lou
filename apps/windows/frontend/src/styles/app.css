@@ -444,3 +444,202 @@ details.dev summary {
 .provider-key {
   color: var(--ink-3);
 }
+
+/* Integrations with their own row (Spotify). */
+.integration-row .spotify-icon {
+  flex: none;
+}
+.dot.inline {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.btn-link {
+  padding-left: 0;
+  padding-right: 0;
+  color: var(--iris);
+}
+.btn-link:hover {
+  background: transparent;
+  color: var(--iris);
+  text-decoration: underline;
+}
+
+/* Modal dialog: one calm sheet over a dimmed window. */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.28);
+  z-index: 50;
+  -webkit-app-region: no-drag;
+  animation: fade-in 160ms var(--ease);
+}
+.dialog {
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: var(--surface-solid);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow);
+  padding: 24px 28px 20px;
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dialog-head h2 {
+  font: 600 20px/28px var(--font-display);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.dialog-sub {
+  color: var(--ink-2);
+  margin: 8px 0 18px;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.setup-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 14px;
+}
+.setup-steps li::marker {
+  color: var(--ink-3);
+  font-weight: 600;
+}
+.setup-steps .field {
+  margin: 10px 0 0;
+}
+.setup-steps .hint {
+  margin: 6px 0 0;
+}
+.copy-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--r-control);
+  background: var(--fill);
+}
+.copy-field code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: 12px/18px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  user-select: all;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Now Playing: a small Spotify Connect remote in the sidebar. */
+.now-playing {
+  -webkit-app-region: no-drag;
+  margin: 0 2px 6px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--fill);
+}
+.np-main {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+.np-art {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  flex: none;
+  object-fit: cover;
+  background: var(--fill-strong);
+}
+.np-text {
+  min-width: 0;
+}
+.np-title {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-sub {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-progress {
+  height: 3px;
+  margin: 10px 0 6px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+.np-progress > div {
+  height: 100%;
+  background: var(--ink-2);
+  transition: width 1s linear;
+}
+.np-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.np-transport {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.np-btn,
+.np-balance {
+  width: 28px;
+  height: 28px;
+}
+.np-btn {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 140ms var(--ease);
+}
+.np-btn:hover {
+  background: var(--fill-strong);
+}
+.np-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.np-play {
+  width: 32px;
+  height: 32px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .np-progress > div,
+  .dialog-backdrop {
+    transition: none;
+    animation: none;
+  }
+}

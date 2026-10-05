@@ -59,7 +59,7 @@ const fixtures: Record<string, unknown> = {
       { id: "a2", provider: "google", displayName: "Alex (school)", address: "alex@school.edu", status: "needs_reauth", capabilities: [], lastCheckedAt: ago(30), lastError: null },
       { id: "a3", provider: "mcp", displayName: "Zapier", address: "https://mcp.zapier.com", status: "connected", capabilities: [], lastCheckedAt: ago(5), lastError: null },
     ],
-    available: { google: true, instagram: true },
+    available: { google: true, instagram: true, spotify: true },
   },
   "GET /api/devices": {
     items: [
@@ -73,6 +73,25 @@ const fixtures: Record<string, unknown> = {
       { id: "m2", type: "account_mapping", content: "Use alex@school.edu for anything about the robotics club.", source: "user", confidence: 1, status: "active", createdAt: ago(800), updatedAt: ago(800), expiresAt: null },
       { id: "m3", type: "contact", content: "Sarah Lee is my chemistry lab partner.", source: "agent-inferred", confidence: 0.6, status: "active", createdAt: ago(60), updatedAt: ago(60), expiresAt: null },
     ],
+  },
+  "GET /api/spotify": {
+    state: "connected",
+    configSource: "server",
+    clientId: "0123456789abcdef0123456789abcdef",
+    redirectUri: "https://lou.example.com/oauth/spotify/callback",
+    scopes: ["user-read-playback-state", "user-modify-playback-state", "user-read-currently-playing", "playlist-read-private"],
+    account: { id: "a4", displayName: "Alex", spotifyUserId: "alex" },
+    lastError: null,
+  },
+  "GET /api/spotify/player": {
+    active: true,
+    isPlaying: true,
+    item: { type: "track", name: "Pink Pony Club", artists: ["Chappell Roan"], album: "The Rise and Fall of a Midwest Princess", imageUrl: null, url: "https://open.spotify.com/", durationMs: 258_000 },
+    progressMs: 61_000,
+    fetchedAt: new Date().toISOString(),
+    device: { id: "s1", name: "DESKTOP-ALEX", type: "Computer", isActive: true, isRestricted: false, volumePercent: 60, supportsVolume: true },
+    shuffle: false,
+    repeat: "off",
   },
   "GET /api/settings": { writeToolsDisabled: false, deviceControlDisabled: false, monitoringDisabled: false, agentPaused: false, autoActivateLowRiskSkills: false, aiProvider: "codex_cli" },
   "GET /api/providers": {

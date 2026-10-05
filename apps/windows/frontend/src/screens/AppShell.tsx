@@ -2,6 +2,7 @@ import type { ServerMessage } from "@lou/protocol";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { bridge } from "../bridge/bridge";
+import { NowPlaying } from "../components/NowPlaying";
 import { Presence } from "../components/Presence";
 import { useConnection } from "../stores/connection";
 import "../styles/app.css";
@@ -78,6 +79,7 @@ export function AppShell() {
           </button>
         ))}
         <div className="spacer" />
+        <NowPlaying />
         <div className="connection" title={connection.error ?? undefined}>
           <span className={`dot ${conn === "online" ? "on" : conn === "connecting" ? "warn" : "bad"}`} />
           {conn === "online" ? "Connected" : conn === "connecting" ? "Connecting…" : "Offline — retrying"}
