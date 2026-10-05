@@ -30,6 +30,32 @@ docs/                development, deployment, protocol, integrations, skills
 scripts/             icon generator, live Windows end-to-end check
 ```
 
+## Quick start (Ubuntu server)
+
+Use an Ubuntu 22.04, 24.04 or 26.04 server with systemd, sudo access, Git and Python 3. On a minimal image, install the prerequisites with `sudo apt-get update && sudo apt-get install -y git python3`.
+
+```bash
+git clone https://github.com/a-riceeater/lou.git
+cd lou
+sudo ./deploy/setup.sh
+```
+
+Follow the prompts for your public HTTPS URL, name/timezone, master encryption key, and model provider: **OpenAI API** (API key) or **Codex CLI** (sign in as the `lou` service user). Gmail, Instagram and MCP configuration are optional. Setup installs the required dependencies, builds Lou in `/opt/lou`, writes protected configuration to `/etc/lou/lou.env`, and enables the systemd service. Back up that configuration and `/var/lib/lou`, including the master key.
+
+Configure your HTTPS reverse proxy or tunnel to forward to `127.0.0.1:8787`, including WebSocket upgrades on `/ws`. The installer leaves DNS, TLS and firewall configuration to you; an external health warning can mean this step is still pending.
+
+Check Lou and generate a pairing code:
+
+```bash
+sudo systemctl status lou
+curl http://127.0.0.1:8787/health
+sudo -u lou -H python3 /opt/lou/deploy/setup-support.py cli pair
+```
+
+Enter your public HTTPS URL and the code in the Windows client (build/run instructions below). Pairing codes expire after 10 minutes. View logs with `sudo journalctl -u lou -f`.
+
+For updates, rerun `sudo ./deploy/setup.sh` from an updated checkout; it preserves `/var/lib/lou` and offers to keep your configuration. See [deployment instructions](docs/DEPLOYMENT.md) for HTTPS examples, backups, recovery and the manual installation fallback. Use `./deploy/setup.sh --help` for installer options.
+
 ## Quick start (development)
 
 Requirements: Node.js 22.12+ (24 recommended), and for the Windows client the .NET 10 SDK and the WebView2 runtime (preinstalled on Windows 11).
@@ -51,8 +77,7 @@ dotnet build src/Lou.App/Lou.App.csproj -p:Platform=x64   # also builds the Reac
 
 Enter the server address and pairing code, add Gmail under **Accounts**, then press <kbd>Alt</kbd>+<kbd>Space</kbd>.
 
-Full details: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Production on Ubuntu with systemd: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-After cloning on Ubuntu, run `sudo ./deploy/setup.sh` for interactive service setup. HTTPS termination remains a separate reverse proxy/tunnel step.
+Full development details: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Tests
 
