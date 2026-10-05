@@ -375,7 +375,8 @@ export function rankResults(query: PlayQuery, results: SpotifySearchResponse, li
   const artistHint = query.artist;
   const consider = (type: string) => !query.type || query.type === type;
   const titleScore = (name: string, artists: string[]) => {
-    const exact = cleanTitle(name) === normalizeText(text) ? 0.15 : 0;
+    // An exact title beats the same title with version noise ("- Remix", "(Live)").
+    const exact = normalizeText(name) === normalizeText(text) ? 0.15 : cleanTitle(name) === normalizeText(text) ? 0.08 : 0;
     const titleSim = Math.max(similarity(cleanTitle(name), text), similarity(`${cleanTitle(name)} ${artists.join(" ")}`, text) * 0.95);
     if (!artistHint) return titleSim + exact;
     const artistSim = Math.max(0, ...artists.map((a) => similarity(a, artistHint)));
