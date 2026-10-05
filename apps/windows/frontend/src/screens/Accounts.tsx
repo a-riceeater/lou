@@ -2,9 +2,10 @@ import type { AccountView } from "@lou/protocol";
 import { useState } from "react";
 import { api, friendlyError } from "../api/client";
 import { bridge } from "../bridge/bridge";
+import { SpotifySection } from "../components/SpotifySection";
 import { Empty, LoadError, relativeTime, useLoad } from "../components/ui";
 
-const PROVIDER: Record<AccountView["provider"], string> = { google: "Gmail", instagram: "Instagram", mcp: "Connected service" };
+const PROVIDER: Record<AccountView["provider"], string> = { google: "Gmail", instagram: "Instagram", mcp: "Connected service", spotify: "Spotify" };
 
 function statusCopy(a: AccountView): { text: string; dot: string } {
   switch (a.status) {
@@ -33,7 +34,8 @@ export function Accounts() {
     }
   };
 
-  const items = accounts.data?.items ?? [];
+  // Spotify has its own section below (setup, device, Now Playing).
+  const items = (accounts.data?.items ?? []).filter((a) => a.provider !== "spotify");
   const available = accounts.data?.available;
 
   return (
@@ -99,6 +101,9 @@ export function Accounts() {
           })}
         </ul>
       )}
+
+      <h2 className="section-title">Music</h2>
+      <SpotifySection />
     </>
   );
 }
