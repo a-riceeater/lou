@@ -91,7 +91,253 @@ backup_file() {
     info "Protected backup: $backup"
 }
 write_value() { printf '%s' "$2" | python3 "$SUPPORT" write "$1" >> "$TEMP/env"; }
-as_lou() { runuser -u lou -- env -i HOME=/var/lib/lou PATH=/usr/local/bin:/usr/bin:/bin CODEX_HOME=/var/lib/lou/.codex "$@"; }
+as_lou() { runuser -u lou -- env -i HOME=/var/lib/lou PATH=/usr/bin:/usr/local/bin:/bin CODEX_HOME=/var/lib/lou/.codex "$@"; }
+
+configure() {
+    run_step 5 'Configuring Lou'
+    local choice=2 old_key= key= url= name= timezone= provider= api_key= codex_path= model=
+    MCP_DEST=
+    : > "$TEMP/env"
+    if [[ -f $CONFIG/lou.env ]]; then
+        info 'Existing /etc/lou/lou.env found.'
+        info '1. Keep it (validated before use)'
+        info '2. Recreate it (backup first; optional settings must be reentered)'
+        info '3. Abort'
+        prompt choice 'Configuration choice' 1
+        case $choice in
+            1) install -m 0600 "$CONFIG/lou.env" "$TEMP/env" ;;
+            2) old_key=$(python3 "$SUPPORT" get "$CONFIG/lou.env" LOU_MASTER_KEY) ;;
+            3) die 'Cancelled before changing the existing configuration.' ;;
+            *) die 'Invalid configuration choice.' ;;
+        esac
+    fi
+    if [[ $choice == 2 ]]; then
+        while true; do
+            prompt url 'Public Lou URL (HTTPS origin)' https://lou.example.com
+            if url=$(python3 "$SUPPORT" url "$url"); then break; fi
+            warn 'Enter a valid HTTPS origin, e.g. https://lou.example.com (no path or credentials).'
+        done
+        write_value LOU_ENV production
+        write_value LOU_HOST 127.0.0.1
+        write_value LOU_PORT 8787
+        write_value LOU_PUBLIC_URL "$url"
+        write_value LOU_DATA_DIR "$DATA"
+        write_value LOU_DB_PATH "$DATA/lou.db"
+        write_value LOU_SKILLS_DIR "$APP/skills"
+        write_value LOU_LOG_LEVEL info
+        if confirm 'Is Lou behind a reverse proxy/tunnel (including one you will configure later)?'; then
+            write_value LOU_TRUST_PROXY true
+        else write_value LOU_TRUST_PROXY false; fi
+        prompt name 'Your name' Owner
+        while true; do
+            prompt timezone 'IANA timezone' UTC
+            if python3 - "$timezone" <<'PY'
+import sys
+from zoneinfo import ZoneInfo
+try:
+    ZoneInfo(sys.argv[1])
+except Exception:
+    sys.exit(1)
+PY
+            then break; fi
+            warn 'Unknown timezone; use e.g. UTC or America/New_York.'
+        done
+        write_value LOU_USER_NAME "$name"
+        write_value LOU_TIMEZONE "$timezone"
+        warn 'Back up the master key securely. Losing it makes encrypted OAuth/device data unreadable.'
+        if [[ -n $old_key ]]; then
+            info 'Retaining the existing master key.'
+            key=$old_key
+        elif [[ -e $DATA/lou.db ]]; then
+            warn 'Database exists: supply its original key. Generating a replacement is unsafe.'
+            prompt_secret key 'Existing Lou master key'
+        else
+            info '1. Generate a new master key (recommended)'
+            info '2. Enter an existing master key'
+            prompt choice 'Master key choice' 1
+            case $choice in
+                1) key=$(as_lou /usr/bin/node "$STAGE/apps/server/dist/cli.js" gen-key) ;;
+                2) prompt_secret key 'Lou master key' ;;
+                *) die 'Invalid master key choice.' ;;
+            esac
+        fi
+        write_value LOU_MASTER_KEY "$key"
+        unset key old_key
+        info 'Choose a model provider: 1. OpenAI API   2. Codex CLI'
+        prompt provider 'Provider choice' 1
+        case $provider in
+            1)
+                write_value AI_PROVIDER openai_api
+                prompt_secret api_key 'OpenAI API key'
+                write_value OPENAI_API_KEY "$api_key"
+                unset api_key
+                prompt model 'OpenAI model' gpt-6-luna
+                write_value LOU_MODEL "$model"
+                write_value LOU_EMBEDDING_MODEL text-embedding-3-small
+                write_value LOU_TRANSCRIBE_MODEL gpt-4o-transcribe
+                ;;
+            2) write_value AI_PROVIDER codex_cli ;;
+            *) die 'Invalid provider choice.' ;;
+        esac
+        write_value LOU_GMAIL_POLL_SECONDS 120
+        write_value LOU_IMPROVEMENT_ENABLED true
+        if confirm 'Configure Google OAuth credentials for Gmail now?'; then
+            prompt name 'Google client ID' ''
+            write_value GOOGLE_CLIENT_ID "$name"
+            prompt_secret api_key 'Google client secret'
+            write_value GOOGLE_CLIENT_SECRET "$api_key"
+            unset api_key
+            info 'Google Web application redirect URI: your public URL + /oauth/google/callback'
+        fi
+        if confirm 'Configure Instagram app credentials now?'; then
+            prompt name 'Instagram app ID' ''
+            write_value INSTAGRAM_APP_ID "$name"
+            prompt_secret api_key 'Instagram app secret'
+            write_value INSTAGRAM_APP_SECRET "$api_key"
+            prompt_secret api_key 'Instagram webhook verify token'
+            write_value INSTAGRAM_WEBHOOK_VERIFY_TOKEN "$api_key"
+            unset api_key
+        fi
+        if confirm 'Configure an MCP configuration file now?'; then
+            info '1. Install the example for later editing (not enabled)'
+            info '2. Import and enable an existing JSON file'
+            prompt choice 'MCP choice' 1
+            case $choice in
+                1)
+                    MCP_DEST=$CONFIG/mcp.example.json
+                    check_file "$MCP_DEST"
+                    install -m 0600 "$REPO/deploy/mcp.example.json" "$TEMP/mcp"
+                    info 'Example stays disabled until you edit it and set LOU_MCP_CONFIG.'
+                    ;;
+                2)
+                    local input
+                    prompt input 'Absolute path to MCP JSON (no symlinks)' ''
+                    # Import only a regular file with no links in its ancestry.
+                    python3 "$SUPPORT" input "$input"
+                    install -m 0600 "$input" "$TEMP/mcp"
+                    python3 "$SUPPORT" mcp "$TEMP/mcp" "$TEMP/env"
+                    MCP_DEST=$CONFIG/mcp.json
+                    write_value LOU_MCP_CONFIG "$MCP_DEST"
+                    ;;
+                *) die 'Invalid MCP choice.' ;;
+            esac
+        fi
+    fi
+    python3 "$SUPPORT" validate "$TEMP/env" "$STAGE"
+    if [[ $(python3 "$SUPPORT" get "$TEMP/env" AI_PROVIDER) == codex_cli ]]; then
+        OPERATION='checking Codex as the lou user'
+        codex_path=$(python3 "$SUPPORT" get "$TEMP/env" CODEX_PATH)
+        if [[ -z $codex_path ]]; then
+            codex_path=$(PATH=/usr/bin:/usr/local/bin:/bin command -v codex || true)
+        fi
+        if [[ -z $codex_path ]]; then
+            confirm 'Install the documented @openai/codex package system-wide with npm?' || die 'Install Codex system-wide and rerun setup.'
+            PATH=/usr/bin:/bin npm install -g @openai/codex
+            codex_path=$(PATH=/usr/bin:/usr/local/bin:/bin command -v codex)
+        fi
+        [[ $codex_path == /* && -x $codex_path ]] || die 'CODEX_PATH must be an executable absolute path.'
+        case $codex_path in /home/*|/root/*|/var/lib/lou/*) die 'Codex must be installed system-wide outside home/data directories.' ;; esac
+        check_path "$(readlink -f -- "$codex_path")"
+        as_lou "$codex_path" --version
+        as_lou "$codex_path" app-server --help >/dev/null 2>&1 || die 'Upgrade Codex: app-server support is required.'
+        if ! as_lou "$codex_path" login status >/dev/null 2>&1; then
+            info 'Codex needs authentication as lou, with CODEX_HOME=/var/lib/lou/.codex.'
+            info "Manual command: sudo -u lou -H env CODEX_HOME=/var/lib/lou/.codex $codex_path login --device-auth"
+            confirm 'Run device authentication as lou now?' || die 'Complete that login and rerun setup.'
+            as_lou "$codex_path" login --device-auth || die 'Codex authentication failed; rerun after signing in as lou.'
+            as_lou "$codex_path" login status >/dev/null 2>&1 || die 'Codex is still not signed in as lou.'
+        fi
+        # Normalize service-visible path/home when recreating; kept configs are
+        # checked by the validator and must already use the same credential home.
+        if ! grep -q '^CODEX_PATH=' "$TEMP/env"; then write_value CODEX_PATH "$codex_path"; fi
+        if ! grep -q '^CODEX_HOME=' "$TEMP/env"; then write_value CODEX_HOME "$DATA/.codex"; fi
+        success 'Codex executable and lou-user authentication verified.'
+    fi
+    python3 "$SUPPORT" validate "$TEMP/env" "$STAGE"
+    success 'Configuration validated; secret values are hidden.'
+}
+
+deploy() {
+    run_step 6 'Installing application, configuration and systemd unit'
+    check_path "$APP"
+    check_path "$STAGE"
+    check_file "$UNIT"
+    systemctl is-active --quiet lou && WAS_ACTIVE=true
+    if [[ -d $APP || -e $UNIT ]]; then
+        info 'Existing code/unit will be refreshed. Previous code and replaced config files will be retained.'
+        confirm 'Proceed with installation and service restart?' || die 'Cancelled before service changes.'
+    fi
+    if [[ $WAS_ACTIVE == true ]]; then
+        OPERATION='stopping the existing Lou service'
+        systemctl stop lou
+        SERVICE_STOPPED=true
+    fi
+    if [[ -d $APP ]]; then
+        PREVIOUS=$(mktemp -d /opt/lou.previous.XXXXXXXX)
+        rmdir -- "$PREVIOUS"
+        mv -T -- "$APP" "$PREVIOUS"
+    fi
+    OPERATION='activating the candidate application'
+    mv -T -- "$STAGE" "$APP"
+    DEPLOYED=true
+    STAGE=
+    SUPPORT=$APP/deploy/setup-support.py
+    check_file "$CONFIG/lou.env"
+    [[ ! -f $CONFIG/lou.env ]] || backup_file "$CONFIG/lou.env"
+    chown root:lou "$TEMP/env"
+    chmod 0640 "$TEMP/env"
+    mv -T -- "$TEMP/env" "$CONFIG/lou.env"
+    if [[ -n $MCP_DEST ]]; then
+        check_file "$MCP_DEST"
+        [[ ! -f $MCP_DEST ]] || backup_file "$MCP_DEST"
+        chown root:lou "$TEMP/mcp"
+        chmod 0640 "$TEMP/mcp"
+        mv -T -- "$TEMP/mcp" "$MCP_DEST"
+    fi
+    [[ ! -f $UNIT ]] || backup_file "$UNIT"
+    local unit_temp
+    unit_temp=$(mktemp /etc/systemd/system/.lou.service.XXXXXXXX)
+    install -o root -g root -m 0644 "$APP/deploy/lou.service" "$unit_temp"
+    mv -T -- "$unit_temp" "$UNIT"
+    systemctl daemon-reload
+    systemctl enable lou
+    OPERATION='starting Lou (see journalctl -u lou)'
+    systemctl restart lou
+}
+
+verify() {
+    run_step 7 'Verifying the service'
+    local healthy=false url
+    [[ $(stat -c '%U:%G:%a' "$CONFIG/lou.env") == root:lou:640 ]]
+    [[ $(stat -c '%U:%G:%a' "$DATA") == lou:lou:700 ]]
+    systemctl is-enabled --quiet lou
+    [[ $(systemctl show lou -p LoadState --value) == loaded ]]
+    for ((attempt=0; attempt<30; attempt++)); do
+        if systemctl is-active --quiet lou && curl --fail --silent --max-time 2 http://127.0.0.1:8787/health | python3 "$SUPPORT" health 2>/dev/null; then
+            healthy=true
+            break
+        fi
+        sleep 1
+    done
+    [[ $healthy == true ]] || die 'Lou did not become healthy; inspect sudo journalctl -u lou -n 40.'
+    # Require a stable service, not just one response before a crash/restart.
+    sleep 3
+    systemctl is-active --quiet lou || die 'Lou exited after startup.'
+    url=$(python3 "$SUPPORT" get "$CONFIG/lou.env" LOU_PUBLIC_URL)
+    if curl --fail --silent --max-time 10 --proto '=https' "$url/health" | python3 "$SUPPORT" health 2>/dev/null; then
+        success 'External HTTPS health endpoint responded.'
+    else
+        warn 'Lou is healthy on 127.0.0.1:8787; the external HTTPS endpoint is not ready yet.'
+    fi
+    run_step 8 'Finished'
+    success 'Lou installed successfully'
+    printf '\nService:  active and enabled\nData:     /var/lib/lou\nConfig:   /etc/lou/lou.env\nLogs:     sudo journalctl -u lou -f\n'
+    info 'Configure your HTTPS reverse proxy/tunnel to 127.0.0.1:8787, including /ws upgrades.'
+    info 'Pair your first device (code expires after 10 minutes):'
+    info 'sudo -u lou -H python3 /opt/lou/deploy/setup-support.py cli pair'
+    info 'Back up /var/lib/lou and /etc/lou/lou.env, including the master key.'
+    [[ -z $PREVIOUS ]] || info "Previous application: $PREVIOUS (retained; remove only after reviewing)."
+}
 
 preflight() {
     run_step 1 'Checking system'
