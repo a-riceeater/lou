@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shutil
 import stat
@@ -22,6 +23,8 @@ def trusted_path(value):
             mode = part.stat()
             if mode.st_uid != 0 or mode.st_mode & 0o022:
                 raise ValueError('system path must be root-owned and not group/world writable')
+            if stat.S_ISREG(mode.st_mode) and mode.st_nlink != 1:
+                raise ValueError('unexpected hard-linked system file')
     return path
 
 
@@ -35,6 +38,10 @@ def public_url(value):
         raise ValueError('invalid port')
     if not re.fullmatch(r'[A-Za-z0-9.:\[\]-]+', u.netloc):
         raise ValueError('invalid hostname')
+    if ':' not in u.hostname:
+        labels = u.hostname.split('.')
+        if any(not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', x) for x in labels):
+            raise ValueError('invalid DNS hostname')
     return value.rstrip('/')
 
 
@@ -96,6 +103,87 @@ def copy_source(source, destination):
     shutil.copytree(source, destination, ignore=ignore, dirs_exist_ok=True)
 
 
+def input_file(value):
+    path = Path(value)
+    if not path.is_absolute() or str(path) != value or '..' in path.parts:
+        raise ValueError('input must be a canonical absolute path')
+    if any(p.is_symlink() for p in [path, *path.parents]):
+        raise ValueError('symlink input is not supported')
+    if not path.is_file():
+        raise ValueError('input must be a regular file')
+
+
+def freeze_tree(value, owner):
+    path = Path(value)
+    if path.parent != Path('/opt') or not path.name.startswith('.lou-build.') or path.is_symlink():
+        raise ValueError('unexpected candidate path')
+    uid = pwd.getpwnam(owner).pw_uid
+    gid = pwd.getpwnam(owner).pw_gid
+    # Use descriptors and O_NOFOLLOW: a build-created link can never redirect a
+    # privileged chmod/chown to an unrelated file, even during a concurrent swap.
+    for directory, dirs, files, fd in os.fwalk(path, follow_symlinks=False):
+        os.fchown(fd, uid, gid)
+        os.fchmod(fd, 0o755)
+        for name in dirs + files:
+            mode = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISLNK(mode.st_mode):
+                resolved = (Path(directory) / name).resolve()
+                if not resolved.is_relative_to(path):
+                    raise ValueError('candidate symlink escapes application directory')
+                os.chown(name, uid, gid, dir_fd=fd, follow_symlinks=False)
+            elif stat.S_ISREG(mode.st_mode):
+                file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                try:
+                    current = os.fstat(file_fd)
+                    if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
+                        raise ValueError('unexpected candidate file or hard link')
+                    os.fchown(file_fd, uid, gid)
+                    os.fchmod(file_fd, 0o755 if current.st_mode & 0o111 else 0o644)
+                finally:
+                    os.close(file_fd)
+            elif not stat.S_ISDIR(mode.st_mode):
+                raise ValueError('candidate contains a special file')
+
+
+def validate_mcp(path, env_path):
+    env = read_env(env_path)
+    raw = Path(path).read_text()
+    refs = set(re.findall(r'\$\{([A-Z0-9_]+)\}', raw))
+    if any(not env.get(key) for key in refs):
+        raise ValueError('MCP has unresolved environment references')
+    raw = re.sub(r'\$\{([A-Z0-9_]+)\}', lambda m: json.dumps(env[m[1]])[1:-1], raw)
+    config = json.loads(raw)
+    if not isinstance(config, dict) or not isinstance(config.get('servers', []), list):
+        raise ValueError('expected MCP servers array')
+    ids = set()
+    for server in config.get('servers', []):
+        if not isinstance(server, dict) or not isinstance(server.get('id'), str):
+            raise ValueError('invalid MCP server')
+        if not re.fullmatch('[a-z][a-z0-9_]*', server['id']) or server['id'] in ids:
+            raise ValueError('invalid or duplicate MCP id')
+        ids.add(server['id'])
+        if not isinstance(server.get('name'), str) or server.get('transport') not in ('http', 'sse', 'stdio'):
+            raise ValueError('MCP name and supported transport required')
+        if server['transport'] == 'stdio':
+            if not isinstance(server.get('command'), str) or not server['command']:
+                raise ValueError('MCP stdio command required')
+        else:
+            url = urlsplit(server.get('url', ''))
+            if url.scheme not in ('http', 'https') or not url.hostname:
+                raise ValueError('MCP HTTP/SSE URL required')
+        for field in ('args', 'include', 'exclude', 'readOnlyTools', 'keywords'):
+            if field in server and (not isinstance(server[field], list) or any(not isinstance(x, str) for x in server[field])):
+                raise ValueError('invalid MCP string array')
+        for field in ('headers', 'env'):
+            if field in server and (not isinstance(server[field], dict) or any(not isinstance(x, str) for x in server[field].values())):
+                raise ValueError('invalid MCP string map')
+        if 'description' in server and not isinstance(server['description'], str):
+            raise ValueError('invalid MCP description')
+        limit = server.get('maxToolsPerRequest', 8)
+        if type(limit) is not int or not 1 <= limit <= 30:
+            raise ValueError('invalid MCP tool limit')
+
+
 def validate_env(path, app):
     env = read_env(path)
     required = {'LOU_ENV': 'production', 'LOU_HOST': '127.0.0.1', 'LOU_PORT': '8787',
@@ -104,15 +192,27 @@ def validate_env(path, app):
     if any(env.get(k) != v for k, v in required.items()):
         raise ValueError('configuration must use the documented production paths and loopback port')
     public_url(env.get('LOU_PUBLIC_URL', ''))
+    if env.get('CODEX_HOME', '/var/lib/lou/.codex') != '/var/lib/lou/.codex':
+        raise ValueError('Codex credentials must use /var/lib/lou/.codex')
+    if env.get('LOU_CODEX_WORKSPACE', '/var/lib/lou/codex-workspace') != '/var/lib/lou/codex-workspace':
+        raise ValueError('Codex workspace must use /var/lib/lou/codex-workspace')
+    if env.get('LOU_MCP_CONFIG'):
+        if env['LOU_MCP_CONFIG'] != '/etc/lou/mcp.json':
+            raise ValueError('MCP configuration must use /etc/lou/mcp.json')
     if env.get('AI_PROVIDER', 'openai_api') == 'openai_api' and not env.get('OPENAI_API_KEY'):
         raise ValueError('OpenAI API key is required for the API provider')
     # Use Lou's actual schema and Vault, without opening/migrating the database.
     code = ("import {loadConfig} from './apps/server/src/config.ts';"
             "import {Vault} from './apps/server/src/security/crypto.ts';"
             "const c=loadConfig(); new Vault(c.masterKey);")
-    clean = {'PATH': '/usr/bin:/usr/local/bin:/bin', 'HOME': '/var/lib/lou', **env}
+    # Unknown variables (e.g. NODE_OPTIONS/LD_PRELOAD) must not inject code into
+    # the configuration validator. The service still gets administrator settings.
+    clean = {'PATH': '/usr/bin:/usr/local/bin:/bin', 'HOME': '/var/lib/lou'}
+    clean.update({k: v for k, v in env.items() if k.startswith(('LOU_', 'OPENAI_', 'GOOGLE_', 'INSTAGRAM_'))
+                  or k in ('AI_PROVIDER', 'CODEX_HOME', 'CODEX_PATH')})
     check = subprocess.run(['/usr/bin/node', '--import', 'tsx', '--input-type=module',
-                            '-e', code], cwd=app, env=clean, capture_output=True)
+                            '-e', code], cwd=app, env=clean, capture_output=True,
+                           user='lou', group='lou', extra_groups=['lou'])
     if check.returncode:
         raise ValueError('Lou rejected the configuration; check types, timezone and master-key format')
 
@@ -128,6 +228,17 @@ def main():
         print(args[0] + '=' + quote(sys.stdin.read()))
     elif action == 'copy':
         copy_source(*args)
+    elif action == 'freeze':
+        freeze_tree(*args)
+    elif action == 'input':
+        input_file(args[0])
+    elif action == 'refs':
+        for key in sorted(set(re.findall(r'\$\{([A-Z0-9_]+)\}', Path(args[0]).read_text()))):
+            if not re.fullmatch('[A-Z_][A-Z0-9_]*', key):
+                raise ValueError('invalid MCP environment reference')
+            print(key)
+    elif action == 'mcp':
+        validate_mcp(*args)
     elif action == 'validate':
         validate_env(*args)
     elif action == 'get':
