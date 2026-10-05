@@ -146,7 +146,7 @@ export type ResolveApprovalRequest = z.infer<typeof ResolveApprovalRequestSchema
 // Accounts
 // ---------------------------------------------------------------------------
 
-export const AccountProviderSchema = z.enum(["google", "instagram", "mcp"]);
+export const AccountProviderSchema = z.enum(["google", "instagram", "mcp", "spotify"]);
 export type AccountProvider = z.infer<typeof AccountProviderSchema>;
 export const AccountStatusSchema = z.enum(["connected", "needs_reauth", "error", "disconnected", "pending"]);
 export type AccountStatus = z.infer<typeof AccountStatusSchema>;
@@ -165,6 +165,75 @@ export type AccountView = z.infer<typeof AccountViewSchema>;
 
 export const ConnectAccountResponseSchema = z.object({ authUrl: z.string() });
 export type ConnectAccountResponse = z.infer<typeof ConnectAccountResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Spotify (remote control over Spotify Connect; Lou never plays audio itself)
+// ---------------------------------------------------------------------------
+
+export const SpotifyConnectionStateSchema = z.enum(["not_configured", "disconnected", "connected", "needs_reauth", "unavailable"]);
+export type SpotifyConnectionState = z.infer<typeof SpotifyConnectionStateSchema>;
+
+export const SpotifyStatusSchema = z.object({
+  state: SpotifyConnectionStateSchema,
+  /** Where the Spotify app credentials come from: server environment, or entered in the setup dialog. */
+  configSource: z.enum(["env", "server"]).nullable(),
+  /** The public client ID (never the secret). */
+  clientId: z.string().nullable(),
+  /** Exact redirect URI to register in the Spotify Developer Dashboard. */
+  redirectUri: z.string(),
+  scopes: z.array(z.string()),
+  account: z.object({ id: z.string(), displayName: z.string(), spotifyUserId: z.string() }).nullable(),
+  lastError: z.string().nullable(),
+});
+export type SpotifyStatus = z.infer<typeof SpotifyStatusSchema>;
+
+export const SpotifyAppCredentialsRequestSchema = z.object({
+  clientId: z.string().trim().regex(/^[A-Za-z0-9]{16,64}$/, "Paste the Client ID from the Spotify Developer Dashboard."),
+  clientSecret: z.string().trim().regex(/^[A-Za-z0-9]{16,64}$/, "Paste the Client secret from the Spotify Developer Dashboard."),
+});
+export type SpotifyAppCredentialsRequest = z.infer<typeof SpotifyAppCredentialsRequestSchema>;
+
+export const SpotifyDeviceViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.string(),
+  isActive: z.boolean(),
+  isRestricted: z.boolean(),
+  volumePercent: z.number().nullable(),
+  supportsVolume: z.boolean(),
+});
+export type SpotifyDeviceView = z.infer<typeof SpotifyDeviceViewSchema>;
+
+export const SpotifyPlayerViewSchema = z.object({
+  /** False when Spotify reports no active player. */
+  active: z.boolean(),
+  isPlaying: z.boolean(),
+  item: z
+    .object({
+      type: z.enum(["track", "episode"]),
+      name: z.string(),
+      artists: z.array(z.string()),
+      album: z.string().nullable(),
+      imageUrl: z.string().nullable(),
+      /** open.spotify.com link back to the item (attribution). */
+      url: z.string().nullable(),
+      durationMs: z.number(),
+    })
+    .nullable(),
+  progressMs: z.number(),
+  /** Server time the state was read; clients interpolate progress from here. */
+  fetchedAt: IsoDate,
+  device: SpotifyDeviceViewSchema.nullable(),
+  shuffle: z.boolean(),
+  repeat: z.enum(["off", "track", "context"]),
+});
+export type SpotifyPlayerView = z.infer<typeof SpotifyPlayerViewSchema>;
+
+export const SpotifyPlayerActionRequestSchema = z.object({
+  action: z.enum(["play", "pause", "next", "previous", "volume"]),
+  volumePercent: z.number().int().min(0).max(100).optional(),
+});
+export type SpotifyPlayerActionRequest = z.infer<typeof SpotifyPlayerActionRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Skills, memory, workflows, proposals
