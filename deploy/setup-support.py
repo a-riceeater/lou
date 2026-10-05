@@ -88,19 +88,39 @@ def read_env(path):
 
 def copy_source(source, destination):
     excluded = {'.git', 'node_modules', 'dist', 'data', 'coverage', 'bin', 'obj', '.codex'}
-    def ignore(_directory, names):
-        return [n for n in names if n in excluded or n.startswith('.env')
-                or re.search(r'\.db(?:-|$)', n)]
-    # copytree preserves neither ownership nor privileged mode bits; reject links
-    # before copying so a checkout cannot smuggle unrelated files into /opt.
-    for directory, dirs, files in os.walk(source, followlinks=False):
-        skipped = ignore(directory, dirs + files)
-        dirs[:] = [d for d in dirs if d not in skipped]
-        for name in dirs + [f for f in files if f not in skipped]:
-            p = Path(directory, name)
-            if p.is_symlink() or not (p.is_dir() or p.is_file()):
-                raise ValueError('source contains a symlink or special file')
-    shutil.copytree(source, destination, ignore=ignore, dirs_exist_ok=True)
+    source, destination = Path(source), Path(destination)
+    if source == destination or destination.is_relative_to(source):
+        raise ValueError('source and candidate must be separate directories')
+    if (source / '.git').exists():
+        files = subprocess.check_output(['git', '-c', f'safe.directory={source}', '-C',
+                                         str(source), 'ls-files', '-z']).decode().split('\0')
+    else:
+        # Installed snapshots can rerun setup from /opt/lou without a .git tree.
+        files = json.loads((source / '.lou-install-files.json').read_text())
+    installed = []
+    for name in files:
+        if not name:
+            continue
+        p = Path(name)
+        if p.is_absolute() or '..' in p.parts or str(p) != name:
+            raise ValueError('invalid source manifest path')
+        if any(x in excluded or x.startswith('.env') or re.search(r'\.db(?:-|$)', x) for x in p.parts):
+            continue
+        origin = source / p
+        input_file(str(origin))
+        target = destination / p
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        # Opening with NOFOLLOW also rejects a last-moment source-file symlink.
+        fd = os.open(origin, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as reader:
+            mode = os.fstat(reader.fileno())
+            if not stat.S_ISREG(mode.st_mode):
+                raise ValueError('source must contain only regular files')
+            with target.open('xb') as writer:
+                shutil.copyfileobj(reader, writer)
+            target.chmod(0o755 if mode.st_mode & 0o111 else 0o644)
+        installed.append(name)
+    (destination / '.lou-install-files.json').write_text(json.dumps(installed))
 
 
 def input_file(value):

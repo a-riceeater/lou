@@ -15,6 +15,7 @@ PREVIOUS=
 WAS_ACTIVE=false
 SERVICE_STOPPED=false
 DEPLOYED=false
+UNIT_TEMP=
 COLOR= RESET=
 if [[ -t 1 && -z ${NO_COLOR:-} ]]; then COLOR=$'\033[32m'; RESET=$'\033[0m'; fi
 
@@ -25,12 +26,13 @@ error() { printf 'Error: %s\n' "$*" >&2; }
 die() { error "$*"; return 1; }
 run_step() { OPERATION=$2; printf '\n[%s/8] %s...\n' "$1" "$2"; }
 
-is_yes() { [[ ${1,,} == y || ${1,,} == yes ]]; }
+is_yes() { case $1 in [yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac; }
 confirm() {
     local answer
     while true; do
         read -r -p "$1 [y/N]: " answer || return 1
-        case ${answer,,} in y|yes) return 0 ;; ''|n|no) return 1 ;; *) warn 'Enter yes or no.' ;; esac
+        is_yes "$answer" && return 0
+        case $answer in ''|[nN]|[nN][oO]) return 1 ;; *) warn 'Enter yes or no.' ;; esac
     done
 }
 prompt() {
@@ -54,17 +56,24 @@ cleanup() {
         unlink "$TEMP/nodesource" 2>/dev/null || true
         rmdir -- "$TEMP" 2>/dev/null || true
     fi
+    if [[ -n $UNIT_TEMP && $UNIT_TEMP == /etc/systemd/system/lou.setup.*.service && ! -L $UNIT_TEMP ]]; then
+        unlink "$UNIT_TEMP" 2>/dev/null || true
+    fi
 }
 failure() {
     local status=$1
     trap - ERR INT TERM
     error "Setup stopped during: $OPERATION (exit $status)."
     warn 'Data in /var/lib/lou has been preserved. No secret values were logged.'
+    if [[ $DEPLOYED == false && -n $PREVIOUS && ! -e $APP && ! -L $APP && -d $PREVIOUS ]]; then
+        mv -T -- "$PREVIOUS" "$APP" || warn 'Could not restore the previous application path.'
+    fi
     if [[ $SERVICE_STOPPED == true && $DEPLOYED == false && $WAS_ACTIVE == true ]]; then
         systemctl start lou || warn 'Could not restart the previous service.'
     fi
     [[ -z $STAGE || ! -d $STAGE ]] || warn "Candidate build retained at $STAGE; review before manually removing it."
     [[ -z $PREVIOUS ]] || warn "Previous application retained at $PREVIOUS. Database migrations are not rolled back."
+    [[ -z $TEMP ]] || warn 'Protected backups use /etc/lou/*.backup.* and /etc/systemd/system/lou.service.backup.*.'
     warn 'Check: sudo systemctl status lou; sudo journalctl -u lou -n 40'
     warn 'Resolve the reported issue, then rerun sudo ./deploy/setup.sh from your checkout.'
     exit "$status"
@@ -215,6 +224,16 @@ PY
                     # Import only a regular file with no links in its ancestry.
                     python3 "$SUPPORT" input "$input"
                     install -m 0600 "$input" "$TEMP/mcp"
+                    local refs ref
+                    refs=$(python3 "$SUPPORT" refs "$TEMP/mcp")
+                    while IFS= read -r ref; do
+                        [[ -n $ref ]] || continue
+                        if [[ -z $(python3 "$SUPPORT" get "$TEMP/env" "$ref") ]]; then
+                            prompt_secret api_key "MCP environment value for $ref"
+                            write_value "$ref" "$api_key"
+                            unset api_key
+                        fi
+                    done <<< "$refs"
                     python3 "$SUPPORT" mcp "$TEMP/mcp" "$TEMP/env"
                     MCP_DEST=$CONFIG/mcp.json
                     write_value LOU_MCP_CONFIG "$MCP_DEST"
@@ -224,6 +243,10 @@ PY
         fi
     fi
     python3 "$SUPPORT" validate "$TEMP/env" "$STAGE"
+    if [[ -n $(python3 "$SUPPORT" get "$TEMP/env" LOU_MCP_CONFIG) && -z $MCP_DEST ]]; then
+        [[ -f $CONFIG/mcp.json ]] || die 'Configured MCP file is missing.'
+        python3 "$SUPPORT" mcp "$CONFIG/mcp.json" "$TEMP/env"
+    fi
     if [[ $(python3 "$SUPPORT" get "$TEMP/env" AI_PROVIDER) == codex_cli ]]; then
         OPERATION='checking Codex as the lou user'
         codex_path=$(python3 "$SUPPORT" get "$TEMP/env" CODEX_PATH)
@@ -267,10 +290,20 @@ deploy() {
         info 'Existing code/unit will be refreshed. Previous code and replaced config files will be retained.'
         confirm 'Proceed with installation and service restart?' || die 'Cancelled before service changes.'
     fi
+    # Complete backups and unit staging before stopping a working service.
+    [[ ! -f $CONFIG/lou.env ]] || backup_file "$CONFIG/lou.env"
+    if [[ -n $MCP_DEST ]]; then
+        check_file "$MCP_DEST"
+        [[ ! -f $MCP_DEST ]] || backup_file "$MCP_DEST"
+    fi
+    [[ ! -f $UNIT ]] || backup_file "$UNIT"
+    UNIT_TEMP=$(mktemp --suffix=.service /etc/systemd/system/lou.setup.XXXXXXXX)
+    install -o root -g root -m 0644 "$STAGE/deploy/lou.service" "$UNIT_TEMP"
+    systemd-analyze verify "$UNIT_TEMP" 2>/dev/null || die 'systemd rejected the repository unit.'
     if [[ $WAS_ACTIVE == true ]]; then
         OPERATION='stopping the existing Lou service'
-        systemctl stop lou
         SERVICE_STOPPED=true
+        systemctl stop lou
     fi
     if [[ -d $APP ]]; then
         PREVIOUS=$(mktemp -d /opt/lou.previous.XXXXXXXX)
@@ -283,22 +316,17 @@ deploy() {
     STAGE=
     SUPPORT=$APP/deploy/setup-support.py
     check_file "$CONFIG/lou.env"
-    [[ ! -f $CONFIG/lou.env ]] || backup_file "$CONFIG/lou.env"
     chown root:lou "$TEMP/env"
     chmod 0640 "$TEMP/env"
     mv -T -- "$TEMP/env" "$CONFIG/lou.env"
     if [[ -n $MCP_DEST ]]; then
         check_file "$MCP_DEST"
-        [[ ! -f $MCP_DEST ]] || backup_file "$MCP_DEST"
         chown root:lou "$TEMP/mcp"
         chmod 0640 "$TEMP/mcp"
         mv -T -- "$TEMP/mcp" "$MCP_DEST"
     fi
-    [[ ! -f $UNIT ]] || backup_file "$UNIT"
-    local unit_temp
-    unit_temp=$(mktemp /etc/systemd/system/.lou.service.XXXXXXXX)
-    install -o root -g root -m 0644 "$APP/deploy/lou.service" "$unit_temp"
-    mv -T -- "$unit_temp" "$UNIT"
+    mv -T -- "$UNIT_TEMP" "$UNIT"
+    UNIT_TEMP=
     systemctl daemon-reload
     systemctl enable lou
     OPERATION='starting Lou (see journalctl -u lou)'
@@ -354,9 +382,13 @@ preflight() {
     for path in /opt /var/lib /etc/lou /etc/systemd/system "$APP"; do check_path "$path"; done
     # The data directory is service-owned, but its ancestry must be trusted.
     [[ ! -L $DATA && ( ! -e $DATA || -d $DATA ) ]] || die 'Unexpected /var/lib/lou symlink or file.'
+    for path in "$DATA/lou.db" "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace"; do
+        [[ ! -L $path ]] || die "Unexpected symlink in runtime path: $path"
+    done
     check_file "$CONFIG/lou.env"
     check_file "$CONFIG/mcp.json"
     check_file "$UNIT"
+    [[ -z $(systemctl show lou -p DropInPaths --value 2>/dev/null || true) ]] || die 'Existing lou.service drop-ins need manual administrator review before installation.'
     for path in "$APP" "$CONFIG"; do
         [[ ! -e $path || -d $path ]] || die "Expected a directory: $path"
         [[ ! -e $path ]] || info "Existing installation path: $path"
@@ -370,6 +402,7 @@ assert json.loads((p / 'apps/server/package.json').read_text())['name'] == '@lou
 PY
     if [[ -x /usr/bin/node ]] && /usr/bin/node -e 'let [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=12)?0:1)'; then
         info "Compatible system Node: $(/usr/bin/node --version)"
+        PATH=/usr/bin:/bin command -v npm >/dev/null || die 'System Node is installed but npm is missing; install matching npm before rerunning.'
         NEED_NODE=false
     else
         info 'System Node missing or older than 22.12; NodeSource 24 will be installed.'
@@ -415,7 +448,10 @@ main() {
         bash "$TEMP/nodesource"
         apt-get install -y nodejs
     fi
-    /usr/bin/node -e 'let [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=12)?0:1)'
+    /usr/bin/node -e 'let [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=12)?0:1)' || die 'Node installation did not supply Node 22.12+.'
+    local npm_version
+    npm_version=$(PATH=/usr/bin:/bin npm --version)
+    [[ ${npm_version%%.*} -ge 10 ]] || die 'npm 10+ is required; update the system npm installation and rerun.'
     info "Node $(/usr/bin/node --version); npm $(PATH=/usr/bin:/bin npm --version)"
 
     run_step 3 'Preparing service identity and directories'
@@ -435,15 +471,10 @@ main() {
     run_step 4 'Building a candidate application'
     STAGE=$(mktemp -d /opt/.lou-build.XXXXXXXX)
     python3 "$SUPPORT" copy "$REPO" "$STAGE"
-    # -P traversal and chown -h change link ownership, never link destinations.
-    find -P "$STAGE" -exec chown -h lou:lou -- {} +
-    chmod 0755 "$STAGE"
+    python3 "$SUPPORT" freeze "$STAGE" lou
     (cd -- "$STAGE"; as_lou npm ci; as_lou npm run build -w @lou/server)
     [[ -f $STAGE/apps/server/dist/index.js && -f $STAGE/apps/server/dist/cli.js && -f $STAGE/apps/server/dist/drizzle/meta/_journal.json ]] || die 'Build outputs/migrations are missing.'
-    find -P "$STAGE" -exec chown -h root:root -- {} +
-    # Strip write access for the build user and ensure readable production code.
-    find -P "$STAGE" -type d -exec chmod 0755 -- {} +
-    find -P "$STAGE" -type f -exec chmod a+r,go-w,u-s,g-s -- {} +
+    python3 "$SUPPORT" freeze "$STAGE" root
     success 'Candidate built; existing service has not been stopped.'
 
     configure
