@@ -97,11 +97,13 @@ def copy_source(source, destination):
     if source == destination or destination.is_relative_to(source):
         raise ValueError('source and candidate must be separate directories')
     if (source / '.git').exists():
-        files = subprocess.check_output(['git', '-c', f'safe.directory={source}', '-C',
+        files = subprocess.check_output(['git', '-c', f'safe.directory={source}', '-c',
+                                         'core.fsmonitor=false', '-C',
                                          str(source), 'ls-files', '-z']).decode().split('\0')
     else:
         # Installed snapshots can rerun setup from /opt/lou without a .git tree.
-        files = json.loads((source / '.lou-install-files.json').read_text())
+        with os.fdopen(open_input(str(source / '.lou-install-files.json'))) as manifest:
+            files = json.load(manifest)
     installed = []
     for name in files:
         if not name:

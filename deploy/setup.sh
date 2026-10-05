@@ -342,7 +342,7 @@ verify() {
     systemctl is-enabled --quiet lou
     [[ $(systemctl show lou -p LoadState --value) == loaded ]]
     for ((attempt=0; attempt<30; attempt++)); do
-        if systemctl is-active --quiet lou && curl --fail --silent --max-time 2 http://127.0.0.1:8787/health | python3 "$SUPPORT" health 2>/dev/null; then
+        if systemctl is-active --quiet lou && curl --fail --silent --noproxy '*' --max-time 2 http://127.0.0.1:8787/health | python3 "$SUPPORT" health 2>/dev/null; then
             healthy=true
             break
         fi
@@ -458,6 +458,9 @@ main() {
     info "Node $(/usr/bin/node --version); npm $(PATH=/usr/bin:/bin npm --version)"
 
     run_step 3 'Preparing service identity and directories'
+    if getent group lou >/dev/null; then
+        [[ $(getent group lou | cut -d: -f3) != 0 ]] || die 'The lou group must not have GID 0.'
+    fi
     if getent passwd lou >/dev/null; then
         [[ $(getent passwd lou | cut -d: -f6) == "$DATA" ]] || die 'Existing lou user must have home /var/lib/lou.'
         [[ $(getent passwd lou | cut -d: -f7) == /usr/sbin/nologin ]] || die 'Existing lou user must use /usr/sbin/nologin.'
@@ -472,16 +475,21 @@ main() {
     install -d -o root -g lou -m 0750 "$CONFIG"
     if [[ -e $DATA/lou.db ]]; then
         [[ -f $DATA/lou.db ]] || die 'Existing database path is not a regular file.'
-        as_lou test -r "$DATA/lou.db" && as_lou test -w "$DATA/lou.db" || die 'Existing database must be readable/writable by lou; review its ownership manually.'
+        if ! as_lou test -r "$DATA/lou.db" || ! as_lou test -w "$DATA/lou.db"; then
+            die 'Existing database must be readable/writable by lou; review its ownership manually.'
+        fi
     fi
     for path in "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace"; do
         if [[ -e $path ]]; then
             [[ -d $path ]] || die "Existing runtime path is not a directory: $path"
-            as_lou test -r "$path" && as_lou test -w "$path" && as_lou test -x "$path" || die "Runtime directory is not accessible to lou; review manually: $path"
+            if ! as_lou test -r "$path" || ! as_lou test -w "$path" || ! as_lou test -x "$path"; then
+                die "Runtime directory is not accessible to lou; review manually: $path"
+            fi
         fi
     done
 
     run_step 4 'Building a candidate application'
+    if [[ ! -d /opt ]]; then install -d -o root -g root -m 0755 /opt; fi
     STAGE=$(mktemp -d /opt/.lou-build.XXXXXXXX)
     python3 "$SUPPORT" copy "$REPO" "$STAGE"
     python3 "$SUPPORT" freeze "$STAGE" lou
