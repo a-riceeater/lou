@@ -1,0 +1,12 @@
+#include "Shared.xcconfig"
+
+SDKROOT = macosx
+SUPPORTED_PLATFORMS = macosx
+MACOSX_DEPLOYMENT_TARGET = 26.5
+PRODUCT_BUNDLE_IDENTIFIER = com.ebantugan.lou.macos
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks
+INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.productivity
+CODE_SIGN_ENTITLEMENTS = Configuration/macOS.entitlements
+ENABLE_APP_SANDBOX = YES
+ENABLE_HARDENED_RUNTIME = YES
+ENABLE_USER_SELECTED_FILES = readonly
