@@ -13,6 +13,11 @@ DEPLOY_DIR=$(dirname -- "$UPDATER_SCRIPT")
 # shellcheck source=deploy/setup.sh
 source "$DEPLOY_DIR/setup.sh"
 
+# Fixed locations (tests source this file and point them at a temporary tree;
+# no option or environment variable can change them).
+OPT=/opt
+SYSTEMD_DIR=/etc/systemd/system
+ADMIN_UID=0
 MIRROR=$UPDATE_STATE/source.git
 BACKUPS=$UPDATE_STATE/backups
 UPDATE_LOCK=$UPDATE_STATE/lock
@@ -139,7 +144,7 @@ print_version() {
 prepare_state() {
     check_path "$UPDATE_STATE"
     [[ -d $UPDATE_STATE ]] || install -d -o root -g root -m 0700 "$UPDATE_STATE"
-    [[ $(stat -c '%u:%a' "$UPDATE_STATE") == 0:700 ]] || die "$UPDATE_STATE must be root-owned with mode 0700."
+    [[ $(stat -c '%u:%a' "$UPDATE_STATE") == "$ADMIN_UID:700" ]] || die "$UPDATE_STATE must be root-owned with mode 0700."
 }
 
 acquire_locks() {
@@ -281,7 +286,7 @@ check_builder() {
     getent passwd "$BUILDER" >/dev/null || die "The $BUILDER account is missing; rerun the installer to create it."
     [[ -d $BUILD_CACHE && ! -L $BUILD_CACHE ]] || die "$BUILD_CACHE is missing; rerun the installer."
     [[ -f $UNIT ]] || die 'lou.service is not installed; run the installer first.'
-    check_path /opt
+    check_path "$OPT"
     check_path "$APP"
     [[ -d $APP && ! -L $APP ]] || die "$APP is not an installed Lou tree."
     check_path "$RELEASES"
@@ -289,9 +294,10 @@ check_builder() {
 }
 
 check_runtime() {
-    local wanted npm_version
-    if ! wanted=$(support node-engine "$STAGE" "$(/usr/bin/node --version)"); then
-        die "Lou $(short "$CANDIDATE") requires Node ${wanted:-in an unsupported version range}; installed: $(/usr/bin/node --version). Upgrade Node deliberately (rerun the installer); Lou was not changed."
+    local wanted npm_version node_version
+    node_version=$(/usr/bin/node --version)
+    if ! wanted=$(support node-engine "$STAGE" "$node_version"); then
+        die "Lou $(short "$CANDIDATE") requires Node ${wanted:-in an unsupported version range}; installed: $node_version. Upgrade Node deliberately (rerun the installer); Lou was not changed."
     fi
     NPM=$(PATH=/usr/bin:/bin command -v npm) || die 'npm is missing.'
     [[ $NPM == /* ]] || die 'npm must be an absolute system path.'
@@ -311,7 +317,7 @@ build_failed() {
 check_units() {
     local unit changed=()
     for unit in lou.service lou-update.service lou-update.timer; do
-        if [[ -e /etc/systemd/system/$unit ]] && ! cmp -s -- "$STAGE/deploy/$unit" "/etc/systemd/system/$unit"; then
+        if [[ -e $SYSTEMD_DIR/$unit ]] && ! cmp -s -- "$STAGE/deploy/$unit" "$SYSTEMD_DIR/$unit"; then
             changed+=("$unit")
         fi
     done
@@ -329,7 +335,7 @@ prepare_candidate() {
     update_step 1 'Preparing release'
     PHASE=prepare
     check_builder
-    STAGE=$(mktemp -d /opt/.lou-build.XXXXXXXX)
+    STAGE=$(mktemp -d "$OPT/.lou-build.XXXXXXXX")
     git_mirror archive --format=tar "$CANDIDATE" | support export "$STAGE"
     [[ -f $STAGE/package-lock.json && -f $STAGE/apps/server/package.json && -f $STAGE/deploy/update.sh ]] \
         || die 'The candidate is not a Lou source tree.'
@@ -614,9 +620,15 @@ update_main() {
     install -m 0600 -- "$DEPLOY_DIR/setup-support.py" "$WORK/setup-support.py"
     SUPPORT=$WORK/setup-support.py
     BUILD_LOG=$WORK/build.log
+    update_flow
+}
+
+# Checks for, prepares, activates and verifies an update. Tests drive this
+# directly against a temporary deployment tree with mocked system commands.
+update_flow() {
+    local reason
     PHASE=check
     OPERATION='checking for updates'
-
     prepare_state
     acquire_locks
     printf 'Lou Updater\n────────────────────────────────────\n'
@@ -643,7 +655,7 @@ update_main() {
     fi
     preview_migrations
     if (( ${#REASONS[@]} > 0 )); then
-        for arg in "${REASONS[@]}"; do warn "$arg"; done
+        for reason in "${REASONS[@]}"; do warn "$reason"; done
         if [[ $ASSUME_YES == true ]]; then
             error 'Automatic update declined; run sudo /opt/lou/deploy/update.sh interactively to decide. Lou was not changed.'
             exit "$EXIT_DECISION"
