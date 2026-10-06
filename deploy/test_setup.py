@@ -223,6 +223,17 @@ class SetupTests(unittest.TestCase):
         self.assertNotEqual(self.shell('confirm test', '').returncode, 0)
         self.assertEqual(self.shell('prompt result test default; printf "%s" "$result"', '\n').stdout, 'default')
 
+    def test_menu_choice_tolerates_whitespace_and_asks_again(self):
+        menu = 'prompt_choice result test 1 1 2 3; printf "[%s]" "$result"'
+        for stdin, expected in [('2\n', '[2]'), (' 2 \n', '[2]'), ('2\r\n', '[2]'), ('\n', '[1]'), ('x\n9\n3\n', '[3]')]:
+            result = self.shell(menu, stdin)
+            with self.subTest(stdin=stdin):
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, expected)
+        result = self.shell(menu, 'x\n3\n')
+        self.assertIn('received x', result.stderr)
+        self.assertNotEqual(self.shell(menu, 'x\n').returncode, 0)  # input ended
+
     def test_check_file_detects_existing_install_and_rejects_links(self):
         file = self.root / 'existing.env'
         file.write_text('X=1')

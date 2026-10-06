@@ -48,6 +48,27 @@ prompt() {
     read -r -p "$2 [$3]: " answer || die 'Input ended; rerun from an interactive terminal.'
     printf -v "$1" '%s' "${answer:-$3}"
 }
+# Numbered menus ignore surrounding whitespace and ask again on anything else,
+# showing what was received (menu answers are never secrets).
+prompt_choice() {
+    local reply
+    while true; do
+        prompt reply "$2" "$3"
+        reply=${reply//[[:space:]]/}
+        if [[ " ${*:4} " == *" $reply "* ]]; then
+            printf -v "$1" '%s' "$reply"
+            return 0
+        fi
+        warn "Enter one of: ${*:4} (received $(printf '%q' "$reply"))."
+    done
+}
+# Drops keys typed while a long step ran, so they cannot answer the next prompt.
+discard_typeahead() {
+    local _
+    [[ -t 0 ]] || return 0
+    while IFS= read -r -s -n 1 -t 0.05 _; do :; done
+    return 0
+}
 prompt_secret() {
     local answer
     read -r -s -p "$2: " answer || die 'Secret input ended.'
@@ -140,11 +161,12 @@ build_in_sandbox() {
         -p InaccessiblePaths=-/media -p InaccessiblePaths=-/mnt -p InaccessiblePaths=-/srv \
         -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes \
         -p RestrictSUIDSGID=yes -p RuntimeMaxSec=3600 \
-        -- "$@"
+        -- "$@" < /dev/null
 }
 
 configure() {
     run_step 5 'Configuring Lou'
+    discard_typeahead
     local choice=2 old_key='' key='' url='' name='' timezone='' provider='' api_key='' codex_path='' model=''
     MCP_DEST=
     : > "$TEMP/env"
@@ -153,7 +175,7 @@ configure() {
         info '1. Keep it (validated before use)'
         info '2. Recreate it (backup first; optional settings must be reentered)'
         info '3. Abort'
-        prompt choice 'Configuration choice' 1
+        prompt_choice choice 'Configuration choice' 1 1 2 3
         case $choice in
             1) install -m 0600 "$CONFIG/lou.env" "$TEMP/env" ;;
             2) old_key=$(python3 "$SUPPORT" get "$CONFIG/lou.env" LOU_MASTER_KEY) ;;
@@ -204,7 +226,7 @@ PY
         else
             info '1. Generate a new master key (recommended)'
             info '2. Enter an existing master key'
-            prompt choice 'Master key choice' 1
+            prompt_choice choice 'Master key choice' 1 1 2
             case $choice in
                 1) key=$(as_lou /usr/bin/node "$STAGE/apps/server/dist/cli.js" gen-key) ;;
                 2) prompt_secret key 'Lou master key' ;;
@@ -214,7 +236,7 @@ PY
         write_value LOU_MASTER_KEY "$key"
         unset key old_key
         info 'Choose a model provider: 1. OpenAI API   2. Codex CLI'
-        prompt provider 'Provider choice' 1
+        prompt_choice provider 'Provider choice' 1 1 2
         case $provider in
             1)
                 write_value AI_PROVIDER openai_api
@@ -263,7 +285,7 @@ PY
         if confirm 'Configure an MCP configuration file now?'; then
             info '1. Install the example for later editing (not enabled)'
             info '2. Import and enable an existing JSON file'
-            prompt choice 'MCP choice' 1
+            prompt_choice choice 'MCP choice' 1 1 2
             case $choice in
                 1)
                     MCP_DEST=$CONFIG/mcp.example.json
