@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { LouError } from "@lou/shared";
-import { describeMissingCodex, findCodexExecutable, readCodexVersion, type CodexCommand } from "./discovery";
+import { describeMissingCodex, findCodexExecutable, missingCodeModeHost, readCodexVersion, type CodexCommand } from "./discovery";
 import {
   CODEX_APPROVAL_REQUESTS,
   type DynamicToolCallParams,
@@ -429,6 +429,13 @@ export class CodexAppServerManager {
     const toDisable = known.size ? LOCKDOWN_FEATURES.filter((f) => known.has(f)) : ["shell_tool", "unified_exec", "view_image"];
     for (const f of toDisable) args.push("--disable", f);
     for (const f of REQUIRED_FEATURES) if (known.has(f)) args.push("--enable", f);
+    const bare = known.has("code_mode_host") && this.command ? missingCodeModeHost(this.command, this.options.env) : undefined;
+    if (bare) {
+      throw new LouError(
+        "NOT_CONFIGURED",
+        `Codex at ${bare} can't call Lou's tools: codex-code-mode-host is missing next to it (copying only the codex binary leaves it behind). Install Codex system-wide with: sudo npm install -g @openai/codex, then point CODEX_PATH at it.`,
+      );
+    }
     // Keep the user's personal Codex AGENTS.md / project docs out of Lou's prompt.
     args.push("-c", "project_doc_max_bytes=0");
     return args;

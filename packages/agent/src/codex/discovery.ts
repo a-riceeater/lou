@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
@@ -99,6 +99,28 @@ function toCommand(path: string, platform: NodeJS.Platform, nodePath: string): C
     return existsSync(`${path}.exe`) ? { file: `${path}.exe`, prefixArgs: [], resolvedPath: `${path}.exe` } : undefined;
   }
   return { file: path, prefixArgs: [], resolvedPath: path };
+}
+
+/**
+ * Code-only Codex models call tools through the code-mode host, a separate
+ * `codex-code-mode-host` executable installed beside `codex`. Copying just the
+ * `codex` binary (e.g. out of ~/.local/bin) leaves it behind, and then every
+ * tool call fails inside Codex. Returns the binary's real path when its host is
+ * missing; npm installs (a JS launcher) locate their own vendored host.
+ */
+export function missingCodeModeHost(command: CodexCommand, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  if (command.prefixArgs.length) return undefined;
+  let real: string;
+  try {
+    real = realpathSync(command.file);
+  } catch {
+    return undefined;
+  }
+  if (/\.(c|m)?js$/i.test(real)) return undefined;
+  const name = platform === "win32" ? "codex-code-mode-host.exe" : "codex-code-mode-host";
+  const pathVar = env.PATH ?? env.Path ?? "";
+  const dirs = [dirname(real), ...pathVar.split(platform === "win32" ? ";" : delimiter).filter(Boolean)];
+  return dirs.some((dir) => isFile(join(dir.replace(/^"|"$/g, ""), name))) ? undefined : real;
 }
 
 /** Extracts the JS entry point from an npm-generated .cmd/.ps1 shim. */
