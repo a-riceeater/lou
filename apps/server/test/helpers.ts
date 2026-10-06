@@ -40,6 +40,8 @@ export class FakeGoogle {
   tokenRequests: URLSearchParams[] = [];
   historyId = "1000";
   failNextWith401 = false;
+  /** When set, token requests with any other client secret get `invalid_client`. */
+  clientSecret: string | undefined;
 
   constructor(readonly email = "me@example.com") {}
 
@@ -51,6 +53,8 @@ export class FakeGoogle {
     if (url.host === "oauth2.googleapis.com") {
       const body = new URLSearchParams(String(init?.body));
       this.tokenRequests.push(body);
+      if (this.clientSecret && body.get("client_secret") !== this.clientSecret) return json({ error: "invalid_client", error_description: "Unauthorized" }, 401);
+      if (body.get("code") === "lou-credential-check") return json({ error: "invalid_grant", error_description: "Malformed auth code." }, 400);
       if (body.get("grant_type") === "authorization_code") {
         return json({ access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600, scope: "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose" });
       }
@@ -143,6 +147,8 @@ export async function startTestServer(
     codexScript?: Record<string, unknown>;
     /** Pass null to leave the OpenAI API provider unconfigured. */
     apiModel?: null;
+    /** Put a Google OAuth client in the environment (default) or leave Gmail setup to the API. */
+    googleEnv?: boolean;
     /** Fake Spotify accounts service + Web API. */
     spotify?: FakeSpotify;
     /** With a fake Spotify: put its app credentials in the environment (default) or leave setup to the API. */
@@ -157,8 +163,7 @@ export async function startTestServer(
     LOU_DATA_DIR: dataDir,
     LOU_MASTER_KEY: options.masterKey ?? generateMasterKey(),
     LOU_PUBLIC_URL: "http://localhost:8787",
-    GOOGLE_CLIENT_ID: "client-id",
-    GOOGLE_CLIENT_SECRET: "client-secret",
+    ...(options.googleEnv !== false ? { GOOGLE_CLIENT_ID: "client-id", GOOGLE_CLIENT_SECRET: "client-secret" } : {}),
     LOU_USER_NAME: "Alex",
     LOU_TIMEZONE: "UTC",
     LOU_IMPROVEMENT_ENABLED: "false",

@@ -167,6 +167,30 @@ export const ConnectAccountResponseSchema = z.object({ authUrl: z.string() });
 export type ConnectAccountResponse = z.infer<typeof ConnectAccountResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Gmail setup (the Google Cloud OAuth client Lou signs in with)
+// ---------------------------------------------------------------------------
+
+export const GoogleSetupStatusSchema = z.object({
+  /** Where the OAuth client comes from: server environment, entered in the setup dialog, or not set up. */
+  configSource: z.enum(["env", "server"]).nullable(),
+  /** The public client ID (never the secret). */
+  clientId: z.string().nullable(),
+  /** Exact redirect URI to register on the Google Cloud OAuth client. */
+  redirectUri: z.string(),
+  scopes: z.array(z.string()),
+});
+export type GoogleSetupStatus = z.infer<typeof GoogleSetupStatusSchema>;
+
+export const GoogleAppCredentialsRequestSchema = z.object({
+  clientId: z
+    .string()
+    .trim()
+    .regex(/^[0-9]+-[A-Za-z0-9_]+\.apps\.googleusercontent\.com$/, "Paste the Client ID from Google Cloud. It ends in .apps.googleusercontent.com."),
+  clientSecret: z.string().trim().regex(/^[A-Za-z0-9_-]{16,128}$/, "Paste the Client secret from Google Cloud."),
+});
+export type GoogleAppCredentialsRequest = z.infer<typeof GoogleAppCredentialsRequestSchema>;
+
+// ---------------------------------------------------------------------------
 // Spotify (remote control over Spotify Connect; Lou never plays audio itself)
 // ---------------------------------------------------------------------------
 

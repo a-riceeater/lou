@@ -169,7 +169,15 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   const integrations = new IntegrationManager(db, vault, audit, logger);
   const notifications = new NotificationManager(db, bus);
   const events = new EventManager(db, notifications, memory, settings, audit, logger, model);
-  const google = new GoogleConnector({ clientId: config.google.clientId, clientSecret: config.google.clientSecret, publicUrl: config.publicUrl }, integrations, audit, fetchImpl);
+  const google = new GoogleConnector(
+    { clientId: config.google.clientId, clientSecret: config.google.clientSecret, publicUrl: config.publicUrl },
+    integrations,
+    settings,
+    vault,
+    audit,
+    logger,
+    fetchImpl,
+  );
   const instagram = new InstagramConnector(
     { appId: config.instagram.appId, appSecret: config.instagram.appSecret, verifyToken: config.instagram.verifyToken, publicUrl: config.publicUrl },
     integrations,
@@ -312,7 +320,8 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
       logger.info({ ...synced, dir: config.skillsDir }, "skills loaded");
       workflows.syncBuiltins();
       await mcp.start(config.mcpConfigPath, owner.id);
-      if (google.configured) gmailPoller.start();
+      // Always running: Gmail can be set up from the app later, and ticks only visit connected accounts.
+      gmailPoller.start();
       expiryTimer = setInterval(() => void approvals_.expireStale().catch((err) => logger.warn({ err }, "approval expiry failed")), 60_000);
       expiryTimer.unref();
       logger.info({ provider: providers.active() }, "model provider selected");

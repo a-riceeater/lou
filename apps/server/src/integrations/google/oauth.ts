@@ -80,6 +80,36 @@ export class GoogleOAuth {
     }
   }
 
+  /**
+   * Checks the client ID and secret without user involvement. Google has no
+   * client-credentials grant, so this redeems a deliberately invalid code: a
+   * known client gets `invalid_grant`, an unknown one or a wrong secret gets
+   * `invalid_client`.
+   */
+  async verifyCredentials(): Promise<void> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(TOKEN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+        body: new URLSearchParams({ code: "lou-credential-check", client_id: this.clientId, client_secret: this.clientSecret, redirect_uri: this.redirectUri, grant_type: "authorization_code" }),
+      });
+    } catch (err) {
+      throw new LouError("UPSTREAM_ERROR", "Google's sign-in service could not be reached. Check the server's internet connection and try again.", { cause: err });
+    }
+    const data = (await res.json().catch(() => undefined)) as { error?: unknown } | undefined;
+    const error = typeof data?.error === "string" ? data.error : "";
+    if (error === "invalid_grant") return;
+    if (error === "invalid_client" || error === "unauthorized_client") {
+      throw new LouError("VALIDATION_FAILED", "Google rejected the Client ID or Client secret. Copy both again from the OAuth client in Google Cloud.");
+    }
+    if (error === "redirect_uri_mismatch") {
+      throw new LouError("VALIDATION_FAILED", `The OAuth client doesn't list Lou's redirect URI. Add ${this.redirectUri} under Authorized redirect URIs.`);
+    }
+    if (res.status >= 500) throw new LouError("UPSTREAM_ERROR", "Google's sign-in service is having trouble right now. Try again shortly.");
+    throw new LouError("UPSTREAM_ERROR", `Google couldn't check these credentials${error ? ` (${error.slice(0, 60)})` : ""}.`, { retryable: false });
+  }
+
   async userInfo(accessToken: string): Promise<{ email: string; name?: string; sub: string }> {
     return fetchJson(this.fetchImpl, USERINFO_URL, { service: "Google", headers: { authorization: `Bearer ${accessToken}` } });
   }

@@ -2,6 +2,7 @@ import {
   ApprovalStatusSchema,
   CreateMemoryRequestSchema,
   CreateRunRequestSchema,
+  GoogleAppCredentialsRequestSchema,
   MemoryTypeSchema,
   ResolveApprovalRequestSchema,
   SpotifyAppCredentialsRequestSchema,
@@ -91,6 +92,21 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
     const d = requireDevice(request);
     s.audit.record({ userId: d.userId, actorType: "device", actorId: d.deviceId, action: "account.connect_started", details: { provider: "google" } });
     return s.google.startConnect(d.userId);
+  });
+
+  // ---- Gmail setup (the Google OAuth client, entered from the setup dialog) -------
+  app.get("/api/google", async (request) => (requireDevice(request), s.google.status()));
+
+  app.post("/api/google/app", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request) => {
+    const d = requireDevice(request);
+    await s.google.saveAppCredentials(d.userId, GoogleAppCredentialsRequestSchema.parse(request.body), { type: "device", id: d.deviceId });
+    return s.google.status();
+  });
+
+  app.delete("/api/google/app", async (request) => {
+    const d = requireDevice(request);
+    s.google.clearAppCredentials(d.userId, { type: "device", id: d.deviceId });
+    return s.google.status();
   });
 
   app.post("/api/accounts/instagram/connect", async (request) => {
