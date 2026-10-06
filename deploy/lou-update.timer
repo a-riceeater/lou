@@ -1,0 +1,16 @@
+# Daily automatic Lou update check. Opt-in:
+#   sudo systemctl enable --now lou-update.timer
+#   sudo systemctl disable --now lou-update.timer
+[Unit]
+Description=Daily Lou update check
+Documentation=file:///opt/lou/docs/DEPLOYMENT.md
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Spreads installations over 03:00-05:00 local time instead of one instant.
+RandomizedDelaySec=2h
+# Runs a missed check after boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

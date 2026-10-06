@@ -1,0 +1,52 @@
+# Unattended Lou update (oneshot), started by lou-update.timer when automatic
+# updates are enabled. Installed by deploy/setup.sh; see docs/DEPLOYMENT.md.
+# Manual alternative with a confirmation prompt: sudo /opt/lou/deploy/update.sh
+[Unit]
+Description=Lou application update
+Documentation=file:///opt/lou/docs/DEPLOYMENT.md
+Wants=network-online.target
+After=network-online.target lou.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/lou/deploy/update.sh --yes
+# 75: another update or setup already holds the lock; not a failure.
+SuccessExitStatus=75
+TimeoutStartSec=90min
+# Leaves time to restore the previous release if stopped during activation.
+TimeoutStopSec=5min
+StateDirectory=lou-updater
+StateDirectoryMode=0700
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lou-update
+
+# Hardening. Root is needed to replace /opt/lou, restart lou.service and run
+# sandboxed helpers as lou-build/lou through systemd. Builds and database reads
+# run in separate transient units; this unit itself cannot write Lou's data or
+# configuration, and cannot see home directories or other mounted storage.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ReadWritePaths=/opt
+ReadOnlyPaths=-/var/lib/lou -/etc/lou
+ProtectHome=true
+InaccessiblePaths=-/media -/mnt -/srv
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_SETUID CAP_SETGID
