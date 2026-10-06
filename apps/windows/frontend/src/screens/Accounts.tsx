@@ -2,6 +2,7 @@ import type { AccountView } from "@lou/protocol";
 import { useState } from "react";
 import { api, friendlyError } from "../api/client";
 import { bridge } from "../bridge/bridge";
+import { GmailSetupDialog } from "../components/GmailSetupDialog";
 import { SpotifySection } from "../components/SpotifySection";
 import { Empty, LoadError, relativeTime, useLoad } from "../components/ui";
 
@@ -22,10 +23,13 @@ function statusCopy(a: AccountView): { text: string; dot: string } {
 
 export function Accounts() {
   const accounts = useLoad(() => api.accounts());
+  const gmailSetup = useLoad(() => api.googleSetup());
+  const [gmailDialog, setGmailDialog] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const connect = async (provider: "google" | "instagram") => {
     setError(null);
+    setGmailDialog(false);
     try {
       const { authUrl } = await api.connectAccount(provider);
       await bridge().request("app.openExternal", { url: authUrl });
@@ -37,6 +41,9 @@ export function Accounts() {
   // Spotify has its own section below (setup, device, Now Playing).
   const items = (accounts.data?.items ?? []).filter((a) => a.provider !== "spotify");
   const available = accounts.data?.available;
+  const gmailReady = available ? available.google : true;
+  // Without a Google OAuth client yet, "Add Gmail" walks through setting one up.
+  const addGmail = () => (gmailReady ? void connect("google") : setGmailDialog(true));
 
   return (
     <>
@@ -44,9 +51,14 @@ export function Accounts() {
       <p className="screen-sub">Services Lou can read from and act on. Sign-ins happen in your browser; Lou never sees your passwords.</p>
 
       <div className="inline-form" style={{ marginBottom: 8 }}>
-        <button className="btn btn-primary" disabled={available && !available.google} onClick={() => void connect("google")}>
+        <button className="btn btn-primary" onClick={addGmail}>
           Add Gmail
         </button>
+        {gmailReady && gmailSetup.data?.redirectUri && (
+          <button className="btn" onClick={() => setGmailDialog(true)}>
+            Gmail setup
+          </button>
+        )}
         <button className="btn" disabled={available && !available.instagram} onClick={() => void connect("instagram")}>
           Add Instagram
         </button>
@@ -54,9 +66,8 @@ export function Accounts() {
           Refresh
         </button>
       </div>
-      {available && (!available.google || !available.instagram) && (
-        <p className="hint">{!available.google ? "Gmail" : "Instagram"} needs to be set up on your server first — see docs/INTEGRATIONS.md.</p>
-      )}
+      {available && !available.google && <p className="hint">Gmail needs a one-time Google Cloud setup. Choose Add Gmail and Lou will walk you through it.</p>}
+      {available && !available.instagram && <p className="hint">Instagram needs to be set up on your server first — see docs/INTEGRATIONS.md.</p>}
       {error && <p className="error-text">{error}</p>}
 
       {accounts.error ? (
@@ -101,6 +112,16 @@ export function Accounts() {
           })}
         </ul>
       )}
+
+      {gmailDialog && gmailSetup.data?.redirectUri && (
+        <GmailSetupDialog
+          status={gmailSetup.data}
+          onClose={() => setGmailDialog(false)}
+          onSaved={(next) => (gmailSetup.setData(next), void accounts.reload())}
+          onConnect={() => void connect("google")}
+        />
+      )}
+      {gmailDialog && gmailSetup.error && <p className="error-text">{gmailSetup.error}</p>}
 
       <h2 className="section-title">Music</h2>
       <SpotifySection />

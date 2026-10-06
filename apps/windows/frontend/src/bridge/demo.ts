@@ -74,6 +74,12 @@ const fixtures: Record<string, unknown> = {
       { id: "m3", type: "contact", content: "Sarah Lee is my chemistry lab partner.", source: "agent-inferred", confidence: 0.6, status: "active", createdAt: ago(60), updatedAt: ago(60), expiresAt: null },
     ],
   },
+  "GET /api/google": {
+    configSource: "server",
+    clientId: "123456789012-demo.apps.googleusercontent.com",
+    redirectUri: "https://lou.example.com/oauth/google/callback",
+    scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose"],
+  },
   "GET /api/spotify": {
     state: "connected",
     configSource: "server",

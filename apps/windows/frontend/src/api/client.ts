@@ -7,6 +7,7 @@ import type {
   ConnectAccountResponse,
   CreateRunResponse,
   DeviceView,
+  GoogleSetupStatus,
   HistoryItem,
   MemoryType,
   MemoryView,
@@ -52,6 +53,9 @@ export const api = {
   connectAccount: (provider: "google" | "instagram" | "spotify") => call<ConnectAccountResponse>("POST", `/api/accounts/${provider}/connect`),
   checkAccount: (id: string) => call<AccountView>("POST", `/api/accounts/${id}/check`),
   disconnectAccount: (id: string) => call<{ ok: true }>("DELETE", `/api/accounts/${id}`),
+
+  googleSetup: () => call<GoogleSetupStatus>("GET", "/api/google"),
+  saveGoogleApp: (clientId: string, clientSecret: string) => call<GoogleSetupStatus>("POST", "/api/google/app", { clientId, clientSecret }),
 
   spotify: () => call<SpotifyStatus>("GET", "/api/spotify"),
   saveSpotifyApp: (clientId: string, clientSecret: string) => call<SpotifyStatus>("POST", "/api/spotify/app", { clientId, clientSecret }),

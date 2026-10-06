@@ -539,6 +539,18 @@ details.dev summary {
   font: 12px/18px ui-monospace, "Cascadia Mono", Consolas, monospace;
   user-select: all;
 }
+.scope-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.scope-list code {
+  padding: 1px 8px;
+  border-radius: var(--r-control);
+  background: var(--fill);
+  font: 12px/20px ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
 @keyframes fade-in {
   from {
     opacity: 0;
