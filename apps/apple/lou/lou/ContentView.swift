@@ -11,14 +11,13 @@ import SwiftData
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var items: [Item]
+    @State private var selectedItem: Item?
 
     var body: some View {
         NavigationViewWrapper {
-            List {
+            List(selection: $selectedItem) {
                 ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
+                    NavigationLink(value: item) {
                         Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
                     }
                 }
@@ -27,6 +26,9 @@ struct ContentView: View {
 #if os(macOS)
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
 #endif
+            .navigationDestination(for: Item.self) { item in
+                ItemDetailView(item: item)
+            }
             .toolbar {
 #if os(iOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -38,6 +40,12 @@ struct ContentView: View {
                         Label("Add Item", systemImage: "plus")
                     }
                 }
+            }
+        } detail: {
+            if let selectedItem {
+                ItemDetailView(item: selectedItem)
+            } else {
+                Text("Select an item")
             }
         }
     }
@@ -52,25 +60,21 @@ struct ContentView: View {
     private func deleteItems(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                modelContext.delete(items[index])
+                let item = items[index]
+                if selectedItem == item {
+                    selectedItem = nil
+                }
+                modelContext.delete(item)
             }
         }
     }
 }
 
-fileprivate struct NavigationViewWrapper<Content: View>: View {
-    let content: () -> Content
+private struct ItemDetailView: View {
+    let item: Item
 
     var body: some View {
-#if os(macOS)
-        NavigationSplitView {
-            content()
-        } detail: {
-            Text("Select an item")
-        }
-#else
-        content()
-#endif
+        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
     }
 }
 
