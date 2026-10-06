@@ -169,7 +169,7 @@ build_in_sandbox() {
 configure() {
     run_step 5 'Configuring Lou'
     discard_typeahead
-    local choice=2 old_key='' key='' url='' name='' timezone='' provider='' api_key='' codex_path='' model=''
+    local choice=2 old_key='' key='' url='' name='' timezone='' provider='' api_key='' codex_path='' codex_real='' model=''
     MCP_DEST=
     : > "$TEMP/env"
     if [[ -f $CONFIG/lou.env ]]; then
@@ -345,8 +345,15 @@ PY
         fi
         [[ $codex_path == /* && -x $codex_path ]] || die 'CODEX_PATH must be an executable absolute path.'
         case $codex_path in /home/*|/root/*|/var/lib/lou/*) die 'Codex must be installed system-wide outside home/data directories.' ;; esac
-        check_path "$(readlink -f -- "$codex_path")"
+        codex_real=$(readlink -f -- "$codex_path")
+        check_path "$codex_real"
         as_lou "$codex_path" --version
+        # Code-only models call Lou's tools through codex-code-mode-host, installed beside
+        # the binary; a copied bare binary leaves it behind and every tool call fails.
+        if [[ $codex_real != *.js && ! -x $(dirname -- "$codex_real")/codex-code-mode-host ]] \
+            && [[ $( (cd / && as_lou "$codex_path" features list) 2>/dev/null) == *$'\n'code_mode_host\ * ]]; then
+            die "$codex_path has no codex-code-mode-host beside it, so Lou's tools would fail. Install Codex with npm (sudo npm install -g @openai/codex), point CODEX_PATH at it and rerun setup."
+        fi
         as_lou "$codex_path" app-server --help >/dev/null 2>&1 || die 'Upgrade Codex: app-server support is required.'
         if ! as_lou "$codex_path" login status >/dev/null 2>&1; then
             info 'Codex needs authentication as lou, with CODEX_HOME=/var/lib/lou/.codex.'
