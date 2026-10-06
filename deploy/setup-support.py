@@ -263,30 +263,43 @@ def freeze_tree(value, owner):
         raise ValueError('unexpected candidate path')
     uid = pwd.getpwnam(owner).pw_uid
     gid = pwd.getpwnam(owner).pw_gid
+    # Hard links are allowed only when every name of the file is inside the
+    # candidate (esbuild's install script links its native binary into place);
+    # a link from outside would let the chown/chmod below reach that file.
+    names = {}
+    for _, dirs, files, fd in os.fwalk(path, follow_symlinks=False):
+        for name in dirs + files:
+            mode = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISREG(mode.st_mode) and mode.st_nlink > 1:
+                key = (mode.st_dev, mode.st_ino)
+                names[key] = names.get(key, 0) + 1
     # Use descriptors and O_NOFOLLOW: a build-created link can never redirect a
     # privileged chmod/chown to an unrelated file, even during a concurrent swap.
     for directory, dirs, files, fd in os.fwalk(path, follow_symlinks=False):
         os.fchown(fd, uid, gid)
         os.fchmod(fd, 0o755)
         for name in dirs + files:
+            relative = (Path(directory) / name).relative_to(path)
             mode = os.stat(name, dir_fd=fd, follow_symlinks=False)
             if stat.S_ISLNK(mode.st_mode):
                 resolved = (Path(directory) / name).resolve()
                 if not resolved.is_relative_to(path):
-                    raise ValueError('candidate symlink escapes application directory')
+                    raise ValueError(f'candidate symlink escapes application directory: {relative}')
                 os.chown(name, uid, gid, dir_fd=fd, follow_symlinks=False)
             elif stat.S_ISREG(mode.st_mode):
                 file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
                 try:
                     current = os.fstat(file_fd)
-                    if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-                        raise ValueError('unexpected candidate file or hard link')
+                    if not stat.S_ISREG(current.st_mode):
+                        raise ValueError(f'candidate file changed type: {relative}')
+                    if current.st_nlink != 1 and names.get((current.st_dev, current.st_ino)) != current.st_nlink:
+                        raise ValueError(f'candidate file is hard-linked outside the candidate: {relative}')
                     os.fchown(file_fd, uid, gid)
                     os.fchmod(file_fd, 0o755 if current.st_mode & 0o111 else 0o644)
                 finally:
                     os.close(file_fd)
             elif not stat.S_ISDIR(mode.st_mode):
-                raise ValueError('candidate contains a special file')
+                raise ValueError(f'candidate contains a special file: {relative}')
 
 
 def validate_mcp(path, env_path):
@@ -815,10 +828,14 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
-        # Inputs may contain credentials; do not print exception values.
+    except Exception as err:
+        # Inputs may contain credentials; do not print exception values, except
+        # for tree operations whose errors name only files in the deployment.
         print('Validation failed for ' + (sys.argv[1] if len(sys.argv) > 1 else 'operation')
               + '; no input values were logged.', file=sys.stderr)
+        if len(sys.argv) > 1 and sys.argv[1] in ('freeze', 'copy', 'export', 'verify-export', 'verify-copy',
+                                                 'move', 'remove', 'prune-releases', 'prune-backups'):
+            print(f'Reason: {err}', file=sys.stderr)
         if len(sys.argv) > 1 and sys.argv[1] == 'validate':
             print('Use the documented production paths, an HTTPS origin, valid Lou settings, '
                   'a 32-byte base64 master key and credentials for the selected provider.', file=sys.stderr)

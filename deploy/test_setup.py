@@ -273,6 +273,28 @@ curl() { printf '{"status":"degraded","db":"error"}'; }
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
         self.assertEqual(target.read_text(), 'keep me')
 
+    def test_freeze_allows_internal_hard_links_only(self):
+        # esbuild's install script hard-links its native binary into node_modules.
+        import types
+        build = self.root / 'opt/.lou-build.Ab3dEf9h'
+        (build / 'node_modules/@esbuild/linux-x64/bin').mkdir(parents=True)
+        (build / 'node_modules/esbuild/bin').mkdir(parents=True)
+        native = build / 'node_modules/@esbuild/linux-x64/bin/esbuild'
+        native.write_text('binary')
+        native.chmod(0o700)
+        os.link(native, build / 'node_modules/esbuild/bin/esbuild')
+        owner = types.SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        with patch.object(support, 'ROOT', self.root), patch.object(support.pwd, 'getpwnam', return_value=owner):
+            support.freeze_tree(str(build), 'root')
+            self.assertEqual(native.stat().st_mode & 0o777, 0o755)
+            outside = self.root / 'outside'
+            outside.write_text('keep me')
+            outside.chmod(0o600)
+            os.link(outside, build / 'node_modules/escape')
+            with self.assertRaises(ValueError):
+                support.freeze_tree(str(build), 'root')
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
+
 
 if __name__ == '__main__':
     unittest.main()
