@@ -313,7 +313,7 @@ describe("Spotify Connect devices", () => {
     const error = await failure("spotify.play", { query: "Pink Pony Club" });
     expect(error).toMatchObject({ code: "NOT_FOUND" });
     expect(error.message).toMatch(/DESKTOP-ALEX.*Bedroom Speaker/);
-    expect(error.message).toContain("device_name");
+    expect(error.message).toContain("deviceName");
     expect(await failure("spotify.next")).toMatchObject({ code: "NOT_FOUND", message: expect.stringContaining("Ask the user which device") });
     expect(await ok("spotify.pause")).toEqual({ paused: true, note: "Nothing was playing." });
   });

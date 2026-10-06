@@ -54,18 +54,11 @@ export class SpotifyPlayer {
   private readonly stateCache = new Map<string, { at: number; value: PlaybackSummary }>();
   private readonly stateInflight = new Map<string, Promise<PlaybackSummary>>();
   private readonly libraryCache = new Map<string, { at: number; items: SpotifyPlaylist[] }>();
-  private readonly listeners = new Set<(userId: string) => void>();
 
   constructor(
     private readonly connector: SpotifyConnector,
     private readonly integrations: IntegrationManager,
   ) {}
-
-  /** Notified after Lou changes playback (for UI refresh). */
-  onChange(listener: (userId: string) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
 
   // ---- State ----------------------------------------------------------------------
 
@@ -373,7 +366,7 @@ export class SpotifyPlayer {
     }
     return new SpotifyError(
       "SPOTIFY_NO_ACTIVE_DEVICE",
-      `${message ?? "Spotify isn't playing on any device right now."} Available devices: ${usable.map(deviceLabel).join("; ")}. Ask the user which device to use, then pass its name as device_name.`,
+      `${message ?? "Spotify isn't playing on any device right now."} Available devices: ${usable.map(deviceLabel).join("; ")}. Ask the user which device to use, then pass its name as deviceName.`,
       { details: { devices } },
     );
   }
@@ -409,7 +402,6 @@ export class SpotifyPlayer {
       // Whatever happened, the next read must come from Spotify.
       const account = this.connector.accounts(userId)[0];
       if (account) this.stateCache.delete(account.id);
-      for (const listener of this.listeners) listener(userId);
     }
   }
 
