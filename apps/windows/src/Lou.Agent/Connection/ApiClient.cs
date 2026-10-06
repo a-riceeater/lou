@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -70,18 +71,39 @@ public sealed class ApiClient : IDisposable
             throw new BridgeException("OFFLINE", "Can't reach that server. Check the address.");
         }
         var text = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
+        if (!response.IsSuccessStatusCode) throw RegistrationError(response.StatusCode, text, url);
+        DeviceRegisterResponse? reg = null;
+        try
         {
-            var message = "Pairing failed.";
-            try
-            {
-                message = JsonDocument.Parse(text).RootElement.GetProperty("error").GetProperty("message").GetString() ?? message;
-            }
-            catch { /* keep default */ }
-            throw new BridgeException("UNAUTHORIZED", message);
+            reg = Json.Deserialize<DeviceRegisterResponse>(text);
         }
-        var reg = Json.Deserialize<DeviceRegisterResponse>(text);
+        catch (JsonException) { /* reported below */ }
+        if (reg is null || string.IsNullOrEmpty(reg.DeviceId) || string.IsNullOrEmpty(reg.DeviceToken))
+            throw new BridgeException("PAIRING_FAILED", $"{url} didn't answer like a Lou server. Check the address and that your proxy forwards it to Lou.");
         return new DeviceCredentials(url, reg.DeviceId, reg.DeviceToken, reg.CommandKey, reg.UserId);
+    }
+
+    /// <summary>
+    /// Pairing failures are not "signed out": they say why the code was refused,
+    /// or that something other than Lou (a proxy, an old server) answered.
+    /// </summary>
+    internal static BridgeException RegistrationError(HttpStatusCode status, string body, string url)
+    {
+        string? message = null;
+        try
+        {
+            message = JsonDocument.Parse(body).RootElement.GetProperty("error").GetProperty("message").GetString();
+        }
+        catch { /* not a Lou error body */ }
+        return (int)status switch
+        {
+            401 or 403 => new BridgeException("PAIRING_REJECTED",
+                $"{message ?? "The server refused that pairing code."} Codes work once and expire after 10 minutes; create one on the server this address reaches."),
+            429 => new BridgeException("RATE_LIMITED", "Too many pairing attempts. Wait a minute, then try again."),
+            _ when message is not null => new BridgeException("PAIRING_FAILED", message),
+            _ => new BridgeException("PAIRING_FAILED",
+                $"{url} answered HTTP {(int)status} instead of Lou. Check the address and that your proxy forwards it to Lou (127.0.0.1:8787)."),
+        };
     }
 
     /// <summary>TLS everywhere except loopback during development (SECURITY.md §7).</summary>

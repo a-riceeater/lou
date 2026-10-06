@@ -93,14 +93,14 @@ internal sealed class WebBridge
         {
             case "api.request":
             {
-                var api = _agent.Api ?? throw new Agent.Connection.BridgeException("UNAUTHORIZED", "This computer isn't connected yet.");
+                var api = _agent.Api ?? throw new Agent.Connection.BridgeException("NOT_PAIRED", "This computer isn't connected yet.");
                 var body = p.TryGetProperty("body", out var b) ? b : (JsonElement?)null;
                 var (status, json) = await api.SendAsync(Str(p, "method"), Str(p, "path"), body);
                 return new { status, body = json };
             }
             case "api.transcribe":
             {
-                var api = _agent.Api ?? throw new Agent.Connection.BridgeException("UNAUTHORIZED", "This computer isn't connected yet.");
+                var api = _agent.Api ?? throw new Agent.Connection.BridgeException("NOT_PAIRED", "This computer isn't connected yet.");
                 var audio = Convert.FromBase64String(Str(p, "audioBase64"));
                 if (audio.Length > 15 * 1024 * 1024) throw new ArgumentException("Recording too long.");
                 return await api.TranscribeAsync(audio, Str(p, "mimeType"));
