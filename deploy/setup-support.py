@@ -1,20 +1,38 @@
 #!/usr/bin/env python3
 """Installer primitives; never execute environment-file contents."""
 import base64
+import hashlib
 import json
 import ipaddress
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import pwd
 import re
 import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from urllib.parse import urlsplit
+
+# Fixed deployment layout. Unit tests substitute a temporary root and owner;
+# deliberately, no argument or environment variable can redirect these paths.
+ROOT = Path('/')
+OWNER = 0
+STAGE_NAME = r'\.lou-build\.[A-Za-z0-9]{8}'
+RELEASE_NAME = r'[0-9]{8}T[0-9]{6}Z-(?:[0-9a-f]{12}|unknown)'
+BACKUP_NAME = r'lou-pre-update-[0-9]{8}T[0-9]{6}Z-(?:[0-9a-f]{12}|unknown)-[0-9a-f]{12}\.db'
+COMMIT = r'[0-9a-f]{40}(?:[0-9a-f]{24})?'
+RELEASE_FILE = '.lou-release.json'
+JOURNAL = 'apps/server/dist/drizzle/meta/_journal.json'
+
+
+def layout():
+    return {'opt': ROOT / 'opt', 'app': ROOT / 'opt/lou', 'releases': ROOT / 'opt/lou-releases',
+            'backups': ROOT / 'var/lib/lou-updater/backups'}
 
 
 def trusted_path(value):
@@ -26,7 +44,7 @@ def trusted_path(value):
             raise ValueError('unexpected symlink; administrator intervention required')
         if part.exists():
             mode = part.stat()
-            if mode.st_uid != 0 or mode.st_mode & 0o022:
+            if mode.st_uid != OWNER or mode.st_mode & 0o022:
                 raise ValueError('system path must be root-owned and not group/world writable')
             if stat.S_ISREG(mode.st_mode) and mode.st_nlink != 1:
                 raise ValueError('unexpected hard-linked system file')
@@ -144,8 +162,13 @@ def spotify_verify(client_id, client_secret, opener=urllib.request.urlopen):
         return None
 
 
+def excluded(parts):
+    """Local, generated and secret files never enter an application snapshot."""
+    names = {'.git', 'node_modules', 'dist', 'data', 'coverage', 'bin', 'obj', '.codex'}
+    return any(x in names or x.startswith('.env') or re.search(r'\.db(?:-|$)', x) for x in parts)
+
+
 def copy_source(source, destination):
-    excluded = {'.git', 'node_modules', 'dist', 'data', 'coverage', 'bin', 'obj', '.codex'}
     source, destination = Path(source), Path(destination)
     if source == destination or destination.is_relative_to(source):
         raise ValueError('source and candidate must be separate directories')
@@ -164,7 +187,7 @@ def copy_source(source, destination):
         p = Path(name)
         if p.is_absolute() or '..' in p.parts or str(p) != name:
             raise ValueError('invalid source manifest path')
-        if any(x in excluded or x.startswith('.env') or re.search(r'\.db(?:-|$)', x) for x in p.parts):
+        if excluded(p.parts):
             continue
         origin = source / p
         input_file(str(origin))
@@ -215,7 +238,7 @@ def open_input(value):
 
 def freeze_tree(value, owner):
     path = Path(value)
-    if path.parent != Path('/opt') or not path.name.startswith('.lou-build.') or path.is_symlink():
+    if path.parent != layout()['opt'] or not path.name.startswith('.lou-build.') or path.is_symlink():
         raise ValueError('unexpected candidate path')
     uid = pwd.getpwnam(owner).pw_uid
     gid = pwd.getpwnam(owner).pw_gid
@@ -317,6 +340,356 @@ def validate_env(path, app):
         raise ValueError('Lou rejected the configuration; check types, timezone and master-key format')
 
 
+# ---- Updater primitives -----------------------------------------------------
+# Every mutation below accepts only exact, pattern-checked deployment locations
+# and never follows symlinks; callers cannot name arbitrary paths.
+
+def deployment_path(value, kinds):
+    """Returns (kind, Path) if value is exactly one of the allowed deployment locations."""
+    places = layout()
+    path = Path(value)
+    if not value or not path.is_absolute() or str(path) != value or '..' in path.parts:
+        raise ValueError('expected a canonical absolute deployment path')
+    matches = {
+        'app': path == places['app'],
+        'stage': path.parent == places['opt'] and re.fullmatch(STAGE_NAME, path.name) is not None,
+        'release': path.parent == places['releases'] and re.fullmatch(RELEASE_NAME, path.name) is not None,
+    }
+    kind = next((k for k in kinds if matches[k]), None)
+    if kind is None:
+        raise ValueError('path is not an allowed deployment location')
+    trusted_path(str(path.parent))
+    return kind, path
+
+
+def real_directory(path):
+    """lstat-based: a symlink or mount point is never treated as a deployment tree."""
+    mode = os.lstat(path)
+    if not stat.S_ISDIR(mode.st_mode):
+        raise ValueError('expected a real directory, not a symlink or file')
+    if os.lstat(path.parent).st_dev != mode.st_dev:
+        raise ValueError('deployment trees must not be mount points')
+    return mode
+
+
+# Activation, rollback and retention are the only allowed renames.
+MOVES = {('app', 'release'), ('stage', 'app'), ('app', 'stage'), ('release', 'app')}
+
+
+def move_tree(source, destination):
+    source_kind, source = deployment_path(source, ('app', 'stage', 'release'))
+    target_kind, target = deployment_path(destination, ('app', 'stage', 'release'))
+    if (source_kind, target_kind) not in MOVES:
+        raise ValueError('unsupported deployment move')
+    mode = real_directory(source)
+    if os.path.lexists(target):
+        raise ValueError('move destination already exists')
+    if os.lstat(target.parent).st_dev != mode.st_dev:
+        raise ValueError('deployment directories must share one filesystem')
+    # rename(2) is atomic and never copies; unlike mv it cannot fall back to a
+    # partial cross-filesystem copy and delete.
+    os.rename(source, target)
+
+
+def remove_tree(value):
+    """Deletes one updater candidate or retained release; never the active app or data."""
+    _, path = deployment_path(value, ('stage', 'release'))
+    mode = real_directory(path)
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise ValueError('this platform cannot remove trees without following symlinks')
+    for _, _, _, fd in os.fwalk(path, follow_symlinks=False):
+        if os.fstat(fd).st_dev != mode.st_dev:
+            raise ValueError('refusing to remove a tree containing another filesystem')
+    shutil.rmtree(path)
+
+
+def prune_releases(keep, protect=''):
+    """Keeps the newest `keep` retained releases (plus `protect`); ignores unknown entries."""
+    if keep < 1:
+        raise ValueError('at least one previous release must be retained')
+    directory = layout()['releases']
+    trusted_path(str(directory))
+    names = sorted(n for n in os.listdir(directory) if re.fullmatch(RELEASE_NAME, n)
+                   and stat.S_ISDIR(os.lstat(directory / n).st_mode))
+    for name in names[:-keep]:
+        if name != protect:
+            remove_tree(str(directory / name))
+            print(name)
+
+
+def prune_backups(keep, protect=''):
+    """Keeps the newest `keep` updater backups (plus `protect`); other files are never touched."""
+    if keep < 1:
+        raise ValueError('at least one backup must be retained')
+    directory = layout()['backups']
+    trusted_path(str(directory))
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        names = []
+        for name in os.listdir(fd):
+            if not re.fullmatch(BACKUP_NAME, name):
+                continue
+            mode = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISREG(mode.st_mode) and mode.st_nlink == 1 and mode.st_uid == OWNER:
+                names.append(name)
+        for name in sorted(names)[:-keep]:
+            if name != protect:
+                os.unlink(name, dir_fd=fd)
+                print(name)
+    finally:
+        os.close(fd)
+
+
+def sqlite_header(header):
+    if len(header) < 100 or not header.startswith(b'SQLite format 3\x00'):
+        raise ValueError('backup is not an SQLite database')
+    page = int.from_bytes(header[16:18], 'big')
+    page = 65536 if page == 1 else page
+    if page < 512 or page & (page - 1):
+        raise ValueError('invalid SQLite page size')
+    pages = int.from_bytes(header[28:32], 'big')
+    # The in-header page count is only authoritative when "version-valid-for" matches.
+    valid = header[92:96] == header[24:28]
+    return page, pages if valid else 0
+
+
+def write_backup(name, stream):
+    """Streams a serialized database into a new root-only file; removes it if incomplete."""
+    if not re.fullmatch(BACKUP_NAME, name):
+        raise ValueError('invalid backup name')
+    directory = layout()['backups']
+    trusted_path(str(directory))
+    header = stream.read(100)
+    page, pages = sqlite_header(header)
+    target = directory / name
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, 'wb') as writer:
+            writer.write(header)
+            shutil.copyfileobj(stream, writer)
+            writer.flush()
+            os.fsync(writer.fileno())
+            size = writer.tell()
+        if size % page or (pages and size != page * pages):
+            raise ValueError('backup is truncated')
+    except BaseException:
+        os.unlink(target)
+        raise
+    return size
+
+
+def load_journal(reader):
+    data = json.load(reader)
+    entries = data.get('entries') if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        raise ValueError('invalid migration journal')
+    result = []
+    for entry in entries:
+        if (not isinstance(entry, dict) or not isinstance(entry.get('tag'), str)
+                or not re.fullmatch(r'[0-9]{4}_[A-Za-z0-9_]+', entry['tag'])
+                or type(entry.get('when')) is not int or entry['when'] < 0):
+            raise ValueError('invalid migration journal entry')
+        result.append((entry['tag'], entry['when']))
+    return result
+
+
+def app_journal(app):
+    with os.fdopen(open_input(str(Path(app) / JOURNAL))) as reader:
+        return load_journal(reader)
+
+
+def new_migrations(current, candidate):
+    """Counts candidate migrations the installed release lacks (all of them if unknown)."""
+    entries = load_journal(sys.stdin) if candidate == '-' else app_journal(candidate)
+    try:
+        known = {tag for tag, _ in app_journal(current)}
+    except (OSError, ValueError):
+        known = set()
+    return sum(1 for tag, _ in entries if tag not in known)
+
+
+def migration_state(previous, latest_applied):
+    """'safe' unless the database records a migration newer than `previous` knows."""
+    _, path = deployment_path(previous, ('app', 'release'))
+    entries = app_journal(str(path))
+    latest_applied = latest_applied.strip()
+    if not latest_applied:
+        return 'safe'
+    if not re.fullmatch(r'[0-9]{1,16}', latest_applied):
+        raise ValueError('unexpected migration timestamp')
+    known = max((when for _, when in entries), default=0)
+    return 'safe' if int(latest_applied) <= known else 'migrated'
+
+
+def archive_members(archive):
+    """Yields (name, member) for regular files in a `git archive` stream, excluding local files."""
+    for member in archive:
+        name = member.name[:-1] if member.isdir() and member.name.endswith('/') else member.name
+        path = PurePosixPath(name)
+        if (not name or path.is_absolute() or '..' in path.parts or str(path) != name
+                or '\\' in name or re.search(r'[\x00-\x1f\x7f]', name)):
+            raise ValueError('invalid archive path')
+        if excluded(path.parts) or member.isdir():
+            continue
+        if not member.isreg():
+            # Matches the installer: snapshots contain only directories and regular files.
+            raise ValueError('candidate source must contain only regular files')
+        yield name, member
+
+
+def export_archive(destination, stream):
+    """Unpacks a candidate revision into a fresh, empty root-owned build directory."""
+    _, target = deployment_path(destination, ('stage',))
+    real_directory(target)
+    if os.listdir(target):
+        raise ValueError('candidate directory must be empty')
+    installed = []
+    with tarfile.open(fileobj=stream, mode='r|') as archive:
+        for name, member in archive_members(archive):
+            file = target / name
+            file.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+            fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            with os.fdopen(fd, 'wb') as writer:
+                shutil.copyfileobj(archive.extractfile(member), writer)
+                os.fchmod(writer.fileno(), 0o755 if member.mode & 0o111 else 0o644)
+            installed.append(name)
+    if not installed:
+        raise ValueError('candidate revision is empty')
+    with (target / '.lou-install-files.json').open('x') as manifest:
+        json.dump(installed, manifest)
+
+
+def verify_export(destination, stream):
+    """After the unprivileged build: every source file still matches the revision."""
+    _, target = deployment_path(destination, ('stage',))
+    names = []
+    with tarfile.open(fileobj=stream, mode='r|') as archive:
+        for name, member in archive_members(archive):
+            expected = hashlib.sha256(archive.extractfile(member).read()).digest()
+            with os.fdopen(open_input(str(target / name)), 'rb') as reader:
+                actual = hashlib.sha256(reader.read()).digest()
+                executable = bool(os.fstat(reader.fileno()).st_mode & 0o111)
+            if actual != expected or executable != bool(member.mode & 0o111):
+                raise ValueError('candidate source changed during the build')
+            names.append(name)
+    with os.fdopen(open_input(str(target / '.lou-install-files.json'))) as reader:
+        if json.load(reader) != names:
+            raise ValueError('candidate file manifest changed during the build')
+
+
+def load_release(path):
+    with os.fdopen(open_input(str(path))) as reader:
+        info = json.load(reader)
+    if (not isinstance(info, dict) or not isinstance(info.get('commit'), str)
+            or not re.fullmatch(COMMIT, info['commit']) or type(info.get('dirty')) is not bool):
+        raise ValueError('invalid release information')
+    return info
+
+
+def write_release(destination, commit, dirty):
+    """Records the source revision of a candidate; written only after the root freeze."""
+    _, target = deployment_path(destination, ('stage',))
+    if not re.fullmatch(COMMIT, commit) or type(dirty) is not bool:
+        raise ValueError('invalid release information')
+    fd = os.open(target / RELEASE_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, 'w') as writer:
+        json.dump({'commit': commit, 'dirty': dirty}, writer)
+
+
+def read_release(app):
+    """Returns 'commit clean|dirty' for an installed tree, or 'unknown'."""
+    _, path = deployment_path(app, ('app', 'stage', 'release'))
+    try:
+        info = load_release(path / RELEASE_FILE)
+    except (OSError, ValueError):
+        return 'unknown'
+    return info['commit'] + (' dirty' if info['dirty'] else ' clean')
+
+
+def source_git(repo):
+    # Plumbing only, with hooks and fsmonitor disabled: a checkout's own config
+    # must not run programs as root, and the index is never rewritten.
+    return ['git', '-c', f'safe.directory={repo}', '-c', 'core.fsmonitor=false',
+            '-c', 'core.hooksPath=/dev/null', '-C', str(repo)]
+
+
+def release_from(repo, destination):
+    """Installer: records the checkout's HEAD (and local edits) or a snapshot's revision."""
+    repo = Path(repo)
+    if (repo / '.git').exists():
+        git = source_git(repo)
+        commit = subprocess.run(git + ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'],
+                                capture_output=True, text=True).stdout.strip()
+        if not re.fullmatch(COMMIT, commit):
+            return
+        # Without an index refresh, timestamp-only changes count as edits: conservative.
+        dirty = subprocess.run(git + ['diff-index', '--quiet', 'HEAD', '--'],
+                               capture_output=True).returncode != 0
+        write_release(destination, commit, dirty)
+    elif (repo / RELEASE_FILE).exists():
+        info = load_release(repo / RELEASE_FILE)
+        write_release(destination, info['commit'], info['dirty'])
+
+
+def update_url(value):
+    u = urlsplit(value)
+    if (not value.startswith('https://') or u.scheme != 'https' or not u.hostname
+            or u.username is not None or u.password is not None or u.query or u.fragment
+            or not re.fullmatch(r'[A-Za-z0-9.-]+(?::[0-9]{1,5})?', u.netloc)
+            or not re.fullmatch(r'(?:/[A-Za-z0-9._~-]+)+/?', u.path)
+            or any(part in ('.', '..') for part in u.path.split('/'))):
+        raise ValueError('update source must be an HTTPS Git URL without credentials')
+    return value
+
+
+def update_branch(value):
+    if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,199}', value) or '..' in value or '//' in value
+            or '/.' in value or value.endswith(('/', '.', '.lock')) or value == 'HEAD'):
+        raise ValueError('invalid update branch')
+    return value
+
+
+def update_config(path):
+    """Reads the root-controlled update source; unknown keys are rejected."""
+    input_file(path)
+    env = read_env(path)
+    if set(env) != {'LOU_UPDATE_REMOTE', 'LOU_UPDATE_BRANCH'}:
+        raise ValueError('update configuration must set exactly LOU_UPDATE_REMOTE and LOU_UPDATE_BRANCH')
+    return update_url(env['LOU_UPDATE_REMOTE']), update_branch(env['LOU_UPDATE_BRANCH'])
+
+
+def detect_update_source(repo):
+    """Suggests the checkout's upstream as the update source (url and branch may be empty)."""
+    git = source_git(Path(repo))
+
+    def output(*args):
+        return subprocess.run(git + list(args), capture_output=True, text=True).stdout.strip()
+    url = branch = ''
+    head = output('symbolic-ref', '-q', 'HEAD')
+    if head.startswith('refs/heads/'):
+        remote, _, ref = output('for-each-ref', '--format=%(upstream:remotename)%00%(upstream:remoteref)',
+                                head).partition('\0')
+        if re.fullmatch(r'[A-Za-z0-9._-]+', remote) and ref.startswith('refs/heads/'):
+            try:
+                branch = update_branch(ref[len('refs/heads/'):])
+                url = update_url(output('config', '--get', f'remote.{remote}.url'))
+            except ValueError:
+                pass
+    return url, branch
+
+
+def engine_satisfied(app, version):
+    """Supports the `>=X[.Y[.Z]]` form Lou uses; anything else needs a manual update."""
+    with os.fdopen(open_input(str(Path(app) / 'package.json'))) as reader:
+        wanted = json.load(reader).get('engines', {}).get('node', '')
+    match = re.fullmatch(r'\s*>=\s*v?([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?\s*', wanted)
+    have = re.fullmatch(r'v?([0-9]+)\.([0-9]+)\.([0-9]+)', version.strip())
+    if not match or not have:
+        raise ValueError('unsupported Node engine requirement')
+    need = tuple(int(x or 0) for x in match.groups())
+    return tuple(int(x) for x in have.groups()) >= need, wanted.strip()
+
+
 def main():
     action, *args = sys.argv[1:]
     if action == 'path':
@@ -374,6 +747,44 @@ def main():
         data = json.load(sys.stdin)
         if data.get('status') != 'ok' or data.get('db') != 'ok':
             raise ValueError('health endpoint reports a degraded database')
+    elif action == 'move':
+        move_tree(*args)
+    elif action == 'remove':
+        remove_tree(*args)
+    elif action == 'prune-releases':
+        prune_releases(int(args[0]), *args[1:])
+    elif action == 'prune-backups':
+        prune_backups(int(args[0]), *args[1:])
+    elif action == 'backup-write':
+        print(write_backup(args[0], sys.stdin.buffer))
+    elif action == 'new-migrations':
+        print(new_migrations(*args))
+    elif action == 'migration-state':
+        print(migration_state(args[0], sys.stdin.read()))
+    elif action == 'export':
+        export_archive(args[0], sys.stdin.buffer)
+    elif action == 'verify-export':
+        verify_export(args[0], sys.stdin.buffer)
+    elif action == 'release-write':
+        if args[2] not in ('clean', 'dirty'):
+            raise ValueError('invalid release state')
+        write_release(args[0], args[1], args[2] == 'dirty')
+    elif action == 'release-read':
+        print(read_release(args[0]))
+    elif action == 'release-from':
+        release_from(*args)
+    elif action == 'update-config':
+        print('\n'.join(update_config(args[0])))
+    elif action == 'update-source':
+        print('\n'.join(detect_update_source(args[0])))
+    elif action == 'update-url':
+        print(update_url(args[0]))
+    elif action == 'update-branch':
+        print(update_branch(args[0]))
+    elif action == 'node-engine':
+        ok, wanted = engine_satisfied(*args)
+        print(wanted)
+        sys.exit(0 if ok else 3)
     else:
         raise ValueError('unknown installer operation')
 
