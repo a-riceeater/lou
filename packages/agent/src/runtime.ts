@@ -1,6 +1,5 @@
 import { LouError, toLouError, type Result } from "@lou/shared";
 import {
-  selectFamilies,
   type AnyToolDefinition,
   type ModelToolSpec,
   type ToolExecutor,
@@ -17,6 +16,7 @@ import {
   formatToolResult,
   recordToolOutcome,
   rejectionMessage,
+  requestFamilies,
   RunDriver,
   type LoopOutcome,
 } from "./shared";
@@ -62,7 +62,7 @@ export class CustomLunaRuntime implements AgentRuntime {
 
   async run(input: AgentInput): Promise<AgentRunResult> {
     const ctx = await this.deps.context.build(input);
-    const families = new Set([...selectFamilies(input.text, this.deps.families()), ...ctx.families]);
+    const families = new Set([...requestFamilies(input.text, ctx.history, this.deps.families()), ...ctx.families]);
     const exposed = new Set<string>();
     for (const family of families) for (const id of this.familyTools(family, input.text)) exposed.add(id);
 

@@ -11,7 +11,7 @@ import {
   type ToolFamily,
 } from "@lou/tools";
 import { z } from "zod";
-import { CustomLunaRuntime, ModelRouter, ScriptedModelProvider, type ContextProvider, type RunState, type RunStore, type ScriptStep } from "../src";
+import { CustomLunaRuntime, ModelRouter, ScriptedModelProvider, type ContextProvider, type RunContext, type RunState, type RunStore, type ScriptStep } from "../src";
 
 export interface Harness {
   runtime: CustomLunaRuntime;
@@ -42,7 +42,7 @@ export interface ToolEnv {
   runs: RunStore;
 }
 
-export function createHarness(steps: ScriptStep[], options: { threadBody?: string } = {}): Harness {
+export function createHarness(steps: ScriptStep[], options: ToolEnvOptions = {}): Harness {
   const env = createToolEnv(options);
   const model = new ScriptedModelProvider(steps);
   const runtime = new CustomLunaRuntime({
@@ -57,8 +57,14 @@ export function createHarness(steps: ScriptStep[], options: { threadBody?: strin
   return { runtime, model, registry: env.registry, approvals: env.approvals, sent: env.sent, executed: env.executed, states: env.states, controls: env.controls, hash: env.hash };
 }
 
+export interface ToolEnvOptions {
+  threadBody?: string;
+  /** Earlier turns of the conversation, as the context provider returns them. */
+  history?: RunContext["history"];
+}
+
 /** Registry + executor + stores shared by runtime tests (custom and Codex). */
-export function createToolEnv(options: { threadBody?: string } = {}): ToolEnv {
+export function createToolEnv(options: ToolEnvOptions = {}): ToolEnv {
   const registry = new ToolRegistry();
   const sent: Array<Record<string, unknown>> = [];
   const executed: string[] = [];
@@ -262,7 +268,7 @@ export function createToolEnv(options: { threadBody?: string } = {}): ToolEnv {
         skills: [{ id: "reply-to-email", description: "Reply to an email" }],
         accounts: [{ id: "acc_1", provider: "google", address: "me@example.com", displayName: "Me", status: "connected" }],
         devices: [],
-        history: [],
+        history: options.history ?? [],
         families: [],
       };
     },

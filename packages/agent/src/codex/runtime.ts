@@ -1,5 +1,5 @@
 import { LouError, type Result } from "@lou/shared";
-import { selectFamilies, type ToolExecutor, type ToolFamily, type ToolRegistry } from "@lou/tools";
+import { type ToolExecutor, type ToolFamily, type ToolRegistry } from "@lou/tools";
 import { formatContext, SYSTEM_PROMPT } from "../prompts";
 import {
   beginResume,
@@ -10,6 +10,7 @@ import {
   fromApiName,
   recordToolOutcome,
   rejectionMessage,
+  requestFamilies,
   RunDriver,
   toApiName,
   type LoopOutcome,
@@ -181,7 +182,7 @@ export class CodexAgentRuntime implements AgentRuntime {
   /** Every built-in model tool plus the most relevant tools of matching external (MCP) families. */
   private toolsetFor(text: string, ctx: RunContext, wantedFamilies: string[]): string[] {
     const families = this.deps.families();
-    const selected = new Set([...selectFamilies(text, families), ...ctx.families, ...wantedFamilies]);
+    const selected = new Set([...requestFamilies(text, ctx.history, families), ...ctx.families, ...wantedFamilies]);
     const ids = new Set<string>();
     for (const family of families) {
       const external = family.id.startsWith("mcp.");

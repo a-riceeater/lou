@@ -1,6 +1,6 @@
 import { Bm25Index, LouError, toLouError, wrapUntrusted, type Result, type SerializedError } from "@lou/shared";
-import type { AnyToolDefinition, ToolExecutor, ToolFamily, ToolRegistry } from "@lou/tools";
-import type { AgentContinuation, AgentRunResult, PendingToolCall, ProgressSink, RunState, RunStore } from "./types";
+import { selectFamilies, type AnyToolDefinition, type ToolExecutor, type ToolFamily, type ToolRegistry } from "@lou/tools";
+import type { AgentContinuation, AgentRunResult, PendingToolCall, ProgressSink, RunContext, RunState, RunStore } from "./types";
 
 /**
  * Logic shared by every runtime implementation (custom Luna loop, Codex App
@@ -10,6 +10,16 @@ import type { AgentContinuation, AgentRunResult, PendingToolCall, ProgressSink, 
 
 export const ENABLE_FAMILY_TOOL = "tools.enable_family";
 export const SKILL_READ_TOOL = "skills.read";
+
+/**
+ * Families matched by the request and by the user's recent turns in the
+ * conversation, so follow-ups ("try again", "the other one") keep the tools of
+ * the request they continue.
+ */
+export function requestFamilies(text: string, history: RunContext["history"], families: readonly ToolFamily[]): string[] {
+  const turns = [...history.filter((h) => h.role === "user").map((h) => h.content), text];
+  return [...new Set(turns.flatMap((t) => selectFamilies(t, families)))];
+}
 
 /** Model-exposed tools of a family; large families are narrowed to the most relevant tools for `text`. */
 export function familyTools(registry: ToolRegistry, families: readonly ToolFamily[], familyId: string, text: string): string[] {

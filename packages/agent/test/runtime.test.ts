@@ -39,6 +39,18 @@ describe("tool selection", () => {
     const result = await h.runtime.run(input("hello there"));
     expect(result.status).toBe("completed");
   });
+
+  it("keeps the families of the conversation's earlier requests for follow-ups", async () => {
+    const history = [
+      { role: "user" as const, content: "Reply to the latest email from Sarah" },
+      { role: "assistant" as const, content: "I couldn't do that." },
+    ];
+    const h = createHarness([{ text: "ok" }], { history });
+    await h.runtime.run(input("try again"));
+    const offered = h.model.requests[0]!.tools!.map((t) => t.name);
+    expect(offered).toContain("gmail.reply");
+    expect(offered).not.toContain("device.open_app");
+  });
 });
 
 describe("tool result handling", () => {
