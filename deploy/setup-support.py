@@ -79,38 +79,72 @@ def quote(value):
     return '"' + re.sub(r'([\\"$`])', r'\\\1', value) + '"'
 
 
+class EnvSyntaxError(ValueError):
+    """Names a line, key and rule, never a value, so it is safe to print."""
+
+
+def parse_env_line(line):
+    """Returns (key, value), or None for blank/comment lines. Error messages
+    never include the value, which may be a secret."""
+    line = line.strip()
+    if not line or line.startswith(('#', ';')):
+        return None
+    key, sep, value = line.partition('=')
+    if not sep or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key):
+        raise EnvSyntaxError('expected KEY=value (no spaces around "=", no "export")')
+    value = value.strip()
+    if value.startswith("'") and value.endswith("'") and len(value) > 1 and "'" not in value[1:-1]:
+        value = value[1:-1]
+    elif value.startswith('"') and value.endswith('"') and len(value) > 1:
+        raw = value[1:-1]
+        value = ''
+        i = 0
+        while i < len(raw):
+            c = raw[i]
+            if c == '\\':
+                i += 1
+                if i == len(raw) or raw[i] not in '\\"$`':
+                    raise EnvSyntaxError(f'{key}: unsupported backslash escape inside double quotes')
+                c = raw[i]
+            elif c == '"':
+                raise EnvSyntaxError(f'{key}: unexpected double quote inside the value')
+            value += c
+            i += 1
+    elif re.search(r'[\s\'"\\$`]', value):
+        raise EnvSyntaxError(f'{key}: values with spaces, quotes, $, ` or \\ must be quoted; '
+                         'shell expressions and inline comments are not supported')
+    try:
+        quote(value)
+    except ValueError:
+        raise EnvSyntaxError(f'{key}: control characters are not supported') from None
+    return key, value
+
+
 def read_env(path):
     result = {}
-    for line in Path(path).read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith(('#', ';')):
+    for number, line in enumerate(Path(path).read_text().splitlines(), 1):
+        try:
+            entry = parse_env_line(line)
+        except EnvSyntaxError as err:
+            raise EnvSyntaxError(f'line {number}: {err}') from None
+        if entry is None:
             continue
-        key, sep, value = line.partition('=')
-        if not sep or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) or key in result:
-            raise ValueError('invalid or duplicate environment variable')
-        value = value.strip()
-        if value.startswith("'") and value.endswith("'") and "'" not in value[1:-1]:
-            value = value[1:-1]
-        elif value.startswith('"') and value.endswith('"'):
-            raw = value[1:-1]
-            value = ''
-            i = 0
-            while i < len(raw):
-                c = raw[i]
-                if c == '\\':
-                    i += 1
-                    if i == len(raw) or raw[i] not in '\\"$`':
-                        raise ValueError('unsupported environment escape')
-                    c = raw[i]
-                elif c == '"':
-                    raise ValueError('unexpected quote')
-                value += c
-                i += 1
-        elif re.search(r'[\s\'"\\$`]', value):
-            raise ValueError('quote environment values; shell expressions are not supported')
-        quote(value)
-        result[key] = value
+        if entry[0] in result:
+            raise EnvSyntaxError(f'line {number}: {entry[0]} is set more than once')
+        result[entry[0]] = entry[1]
     return result
+
+
+def recover_value(path, key):
+    """Reads one variable from a file that may be malformed elsewhere (used when
+    recreating a broken configuration, to keep its master key)."""
+    found = []
+    for line in Path(path).read_text().splitlines():
+        if line.strip().partition('=')[0] == key:
+            found.append(parse_env_line(line)[1])
+    if len(found) != 1:
+        raise EnvSyntaxError(f'{key} must appear exactly once')
+    return found[0]
 
 
 def set_env(path, key, value):
@@ -753,6 +787,10 @@ def main():
         validate_env(*args)
     elif action == 'get':
         print(read_env(args[0]).get(args[1], ''))
+    elif action == 'recover':
+        print(recover_value(args[0], args[1]))
+    elif action == 'check-env':
+        read_env(args[0])
     elif action == 'cli':
         if os.getuid() != pwd.getpwnam('lou').pw_uid or os.getuid() == 0:
             raise ValueError('run the administrative launcher as the lou service user')
@@ -833,8 +871,10 @@ if __name__ == '__main__':
         # for tree operations whose errors name only files in the deployment.
         print('Validation failed for ' + (sys.argv[1] if len(sys.argv) > 1 else 'operation')
               + '; no input values were logged.', file=sys.stderr)
-        if len(sys.argv) > 1 and sys.argv[1] in ('freeze', 'copy', 'export', 'verify-export', 'verify-copy',
-                                                 'move', 'remove', 'prune-releases', 'prune-backups'):
+        tree_action = len(sys.argv) > 1 and sys.argv[1] in (
+            'freeze', 'copy', 'export', 'verify-export', 'verify-copy', 'move', 'remove',
+            'prune-releases', 'prune-backups')
+        if tree_action or isinstance(err, EnvSyntaxError):
             print(f'Reason: {err}', file=sys.stderr)
         if len(sys.argv) > 1 and sys.argv[1] == 'validate':
             print('Use the documented production paths, an HTTPS origin, valid Lou settings, '

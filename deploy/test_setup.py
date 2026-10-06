@@ -44,6 +44,30 @@ class SetupTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 support.quote(value)
 
+    def test_env_errors_name_the_line_but_never_the_value(self):
+        file = self.root / 'env'
+        for text, expected in [('A=1\nLOU_USER_NAME=Sec ret\n', 'line 2: LOU_USER_NAME'),
+                               ('export X=Sec\n', 'line 1: expected KEY=value'),
+                               ('X=1\nX=Sec\n', 'line 2: X is set more than once')]:
+            file.write_text(text)
+            with self.subTest(text=text), self.assertRaises(support.EnvSyntaxError) as caught:
+                support.read_env(file)
+            self.assertIn(expected, str(caught.exception))
+            self.assertNotIn('Sec', str(caught.exception))
+        result = subprocess.run(['python3', '-B', str(DEPLOY / 'setup-support.py'), 'check-env', str(file)],
+                                text=True, capture_output=True)
+        self.assertIn('Reason: line 2', result.stderr)
+        self.assertNotIn('Sec', result.stderr)
+
+    def test_master_key_is_recoverable_from_an_otherwise_invalid_file(self):
+        file = self.root / 'env'
+        file.write_text('LOU_USER_NAME=Two Words\nLOU_MASTER_KEY="a2V5"\n')
+        self.assertEqual(support.recover_value(file, 'LOU_MASTER_KEY'), 'a2V5')
+        for text in ['LOU_MASTER_KEY=a\nLOU_MASTER_KEY=b\n', 'X=1\n', 'LOU_MASTER_KEY=two words\n']:
+            file.write_text(text)
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                support.recover_value(file, 'LOU_MASTER_KEY')
+
     def test_url_validation(self):
         for value in ['https://lou.example.com', 'https://localhost:443/', 'https://[::1]:443']:
             self.assertEqual(support.public_url(value), value.rstrip('/'))

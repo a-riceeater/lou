@@ -96,6 +96,8 @@ cleanup() {
 }
 failure() {
     local status=$1
+    # A failing command substitution reports to its parent; report only once.
+    (( BASH_SUBSHELL == 0 )) || exit "$status"
     trap - ERR INT TERM
     error "Setup stopped during: $OPERATION (exit $status)."
     warn 'Data in /var/lib/lou has been preserved. No secret values were logged.'
@@ -178,7 +180,15 @@ configure() {
         prompt_choice choice 'Configuration choice' 1 1 2 3
         case $choice in
             1) install -m 0600 "$CONFIG/lou.env" "$TEMP/env" ;;
-            2) old_key=$(python3 "$SUPPORT" get "$CONFIG/lou.env" LOU_MASTER_KEY) ;;
+            2)
+                # Recreating is the fix for a malformed file: only its key line must parse.
+                python3 "$SUPPORT" check-env "$CONFIG/lou.env" \
+                    || warn 'The existing file has the invalid line reported above; it is replaced after a protected backup.'
+                if ! old_key=$(python3 "$SUPPORT" recover "$CONFIG/lou.env" LOU_MASTER_KEY 2>/dev/null); then
+                    old_key=''
+                    warn 'Could not read LOU_MASTER_KEY from the existing file; you will be asked for it.'
+                fi
+                ;;
             3) die 'Cancelled before changing the existing configuration.' ;;
             *) die 'Invalid configuration choice.' ;;
         esac
