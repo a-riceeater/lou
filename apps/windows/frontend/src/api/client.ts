@@ -97,6 +97,13 @@ export interface FriendlyError {
   fallbackProvider?: AiProvider;
 }
 
+/** Pairing never means "signed out": show why the server refused, or why it couldn't be reached. */
+export function pairingErrorMessage(err: unknown): string {
+  const e = err as { code?: string; message?: string };
+  if ((e.code === "UNAUTHORIZED" || e.code === "PAIRING_REJECTED") && e.message) return e.message;
+  return friendlyError(err).message;
+}
+
 export function friendlyError(err: unknown): FriendlyError {
   const e = err as { code?: string; message?: string; details?: { fallbackProvider?: AiProvider } };
   const fallbackProvider = e.details?.fallbackProvider;

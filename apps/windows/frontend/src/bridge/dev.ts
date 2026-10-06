@@ -108,8 +108,15 @@ export class DevBridge implements Bridge {
     }).catch(() => {
       throw new BridgeError("OFFLINE", "Can't reach that server.");
     });
-    const body = await res.json();
-    if (!res.ok) throw new BridgeError(body?.error?.code ?? "UNAUTHORIZED", body?.error?.message ?? "Pairing failed.");
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const message = body?.error?.message as string | undefined;
+      if (res.status === 401 || res.status === 403) {
+        throw new BridgeError("PAIRING_REJECTED", `${message ?? "The server refused that pairing code."} Codes work once and expire after 10 minutes; create one on the server this address reaches.`);
+      }
+      throw new BridgeError("PAIRING_FAILED", message ?? `${serverUrl} answered HTTP ${res.status} instead of Lou. Check the address and your proxy.`);
+    }
+    if (!body) throw new BridgeError("PAIRING_FAILED", `${serverUrl} didn't answer like a Lou server.`);
     const reg = DeviceRegisterResponseSchema.parse(body);
     const cfg = { serverUrl, deviceToken: reg.deviceToken, deviceId: reg.deviceId };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));

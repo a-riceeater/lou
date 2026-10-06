@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { friendlyError } from "../api/client";
+import { pairingErrorMessage } from "../api/client";
 import { bridge } from "../bridge/bridge";
 import { Presence } from "../components/Presence";
 
@@ -22,7 +22,7 @@ export function Pairing({ revoked }: { revoked?: boolean }) {
           try {
             await bridge().request("pairing.complete", { serverUrl: serverUrl.trim(), pairingCode: code.trim(), name: name.trim() || "My PC" });
           } catch (err) {
-            setError(friendlyError(err).message);
+            setError(pairingErrorMessage(err));
           } finally {
             setBusy(false);
           }
