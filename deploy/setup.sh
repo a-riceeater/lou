@@ -8,6 +8,14 @@ APP=/opt/lou
 DATA=/var/lib/lou
 CONFIG=/etc/lou
 UNIT=/etc/systemd/system/lou.service
+SETUP_LOCK=/run/lou-setup.lock
+UPDATE_STATE=/var/lib/lou-updater
+UPDATE_CONF=/etc/lou/update.conf
+RELEASES=/opt/lou-releases
+UPDATE_UNITS=(lou-update.service lou-update.timer)
+BUILDER=lou-build
+BUILD_CACHE=/var/cache/lou-build
+BUILD_UNIT=lou-candidate-build
 OPERATION=initialization
 STAGE=
 TEMP=
@@ -24,7 +32,7 @@ success() { printf '%s✓ %s%s\n' "$COLOR" "$*" "$RESET"; }
 warn() { printf 'Warning: %s\n' "$*" >&2; }
 error() { printf 'Error: %s\n' "$*" >&2; }
 die() { error "$*"; return 1; }
-run_step() { OPERATION=$2; printf '\n[%s/8] %s...\n' "$1" "$2"; }
+run_step() { OPERATION=$2; printf '\n[%s/9] %s...\n' "$1" "$2"; }
 
 is_yes() { case $1 in [yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac; }
 confirm() {
@@ -54,11 +62,16 @@ cleanup() {
         unlink "$TEMP/env" 2>/dev/null || true
         unlink "$TEMP/mcp" 2>/dev/null || true
         unlink "$TEMP/nodesource" 2>/dev/null || true
+        unlink "$TEMP/update" 2>/dev/null || true
+        unlink "$TEMP/manifest" 2>/dev/null || true
         rmdir -- "$TEMP" 2>/dev/null || true
     fi
-    if [[ -n $UNIT_TEMP && $UNIT_TEMP == /etc/systemd/system/lou.setup.*.service && ! -L $UNIT_TEMP ]]; then
+    if [[ -n $UNIT_TEMP && ! -L $UNIT_TEMP && ( $UNIT_TEMP == /etc/systemd/system/lou.setup.*.service
+            || $UNIT_TEMP == /etc/systemd/system/lou.setup.*.timer ) ]]; then
         unlink "$UNIT_TEMP" 2>/dev/null || true
     fi
+    # A cancelled build must not keep running in its transient unit.
+    if [[ -n $STAGE ]]; then systemctl stop "$BUILD_UNIT.service" >/dev/null 2>&1 || true; fi
 }
 failure() {
     local status=$1
@@ -84,6 +97,7 @@ help() {
         'Usage: sudo ./deploy/setup.sh [--help | --dry-run]' \
         'Interactive only. --dry-run checks the host and prints the plan without changes.' \
         'Installs dependencies, builds /opt/lou, configures /etc/lou, enables lou.service.' \
+        'Installs the updater (deploy/update.sh, lou-update.timer); automatic updates are opt-in.' \
         'Preserves /var/lib/lou. Does not configure TLS, DNS, proxies or firewall rules.'
 }
 
@@ -101,6 +115,33 @@ backup_file() {
 }
 write_value() { printf '%s' "$2" | python3 "$SUPPORT" write "$1" >> "$TEMP/env"; }
 as_lou() { runuser -u lou -- env -i HOME=/var/lib/lou PATH=/usr/bin:/usr/local/bin:/bin CODEX_HOME=/var/lib/lou/.codex "$@"; }
+
+# Runs one candidate build command (npm ci / build) as the unprivileged builder
+# in a transient sandboxed unit. Dependency lifecycle scripts can write only the
+# candidate and npm cache; Lou's secrets, data and home directories are hidden.
+# Shared with update.sh, which calls it in a conditional: no implicit set -e.
+build_in_sandbox() {
+    local stage=$1
+    shift
+    if [[ $stage != /opt/.lou-build.* || ! -d $stage || -L $stage ]]; then
+        error 'Unexpected candidate build path.'
+        return 1
+    fi
+    systemctl stop "$BUILD_UNIT.service" >/dev/null 2>&1 || true
+    systemctl reset-failed "$BUILD_UNIT.service" >/dev/null 2>&1 || true
+    systemd-run --quiet --wait --pipe --collect --service-type=exec --unit="$BUILD_UNIT" \
+        -p User="$BUILDER" -p Group="$BUILDER" -p WorkingDirectory="$stage" \
+        -p Environment=HOME="$BUILD_CACHE" -p Environment=PATH=/usr/bin:/bin -p Environment=CI=true \
+        -p Environment=npm_config_cache="$BUILD_CACHE/npm" -p Environment=npm_config_update_notifier=false \
+        -p Environment=npm_config_fund=false -p Environment=npm_config_audit=false \
+        -p UMask=0022 -p NoNewPrivileges=yes -p PrivateTmp=yes -p PrivateDevices=yes \
+        -p ProtectSystem=strict -p ProtectHome=yes -p ReadWritePaths="$stage" -p ReadWritePaths="$BUILD_CACHE" \
+        -p InaccessiblePaths=-"$CONFIG" -p InaccessiblePaths=-"$DATA" -p InaccessiblePaths=-"$UPDATE_STATE" \
+        -p InaccessiblePaths=-/media -p InaccessiblePaths=-/mnt -p InaccessiblePaths=-/srv \
+        -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes \
+        -p RestrictSUIDSGID=yes -p RuntimeMaxSec=3600 \
+        -- "$@"
+}
 
 configure() {
     run_step 5 'Configuring Lou'
@@ -371,7 +412,95 @@ verify() {
         warn 'Lou is healthy on 127.0.0.1:8787; the external HTTPS endpoint is not ready yet.'
     fi
     systemctl is-active --quiet lou || die 'Lou exited during verification.'
-    run_step 8 'Finished'
+}
+
+configure_update_source() {
+    local conf detected url='' branch=''
+    check_file "$UPDATE_CONF"
+    if [[ -f $UPDATE_CONF ]]; then
+        if conf=$(python3 "$SUPPORT" update-config "$UPDATE_CONF" 2>/dev/null); then
+            info "Update source: branch ${conf#*$'\n'} of ${conf%%$'\n'*} (kept; edit $UPDATE_CONF to change it)"
+            return 0
+        fi
+        warn "$UPDATE_CONF is invalid; it will be replaced after a protected backup."
+    fi
+    # Suggest the checkout's upstream; the administrator confirms or replaces it.
+    detected=$(python3 "$SUPPORT" update-source "$REPO" 2>/dev/null || true)
+    if [[ $detected == *$'\n'* ]]; then url=${detected%%$'\n'*}; branch=${detected#*$'\n'}; fi
+    info 'The updater fetches one branch of one HTTPS Git repository (public; no credentials).'
+    while true; do
+        prompt url 'Update repository URL (blank to skip)' "$url"
+        if [[ -z $url ]]; then
+            warn 'No update source configured; rerun setup to enable updates later.'
+            return 1
+        fi
+        python3 "$SUPPORT" update-url "$url" >/dev/null 2>&1 && break
+        warn 'Enter an https:// Git URL without credentials, e.g. https://github.com/a-riceeater/lou.git'
+        url=''
+    done
+    while true; do
+        prompt branch 'Update branch' "${branch:-main}"
+        python3 "$SUPPORT" update-branch "$branch" >/dev/null 2>&1 && break
+        warn 'Enter a branch name such as main.'
+        branch=''
+    done
+    : > "$TEMP/update"
+    printf '%s' "$url" | python3 "$SUPPORT" write LOU_UPDATE_REMOTE >> "$TEMP/update"
+    printf '%s' "$branch" | python3 "$SUPPORT" write LOU_UPDATE_BRANCH >> "$TEMP/update"
+    python3 "$SUPPORT" update-config "$TEMP/update" >/dev/null
+    [[ ! -f $UPDATE_CONF ]] || backup_file "$UPDATE_CONF"
+    chown root:root "$TEMP/update"
+    chmod 0644 "$TEMP/update"
+    mv -T -- "$TEMP/update" "$UPDATE_CONF"
+    info "Update source: branch $branch of $url"
+}
+
+configure_updates() {
+    run_step 8 'Configuring updates'
+    local unit first=true configured=true
+    [[ ! -e /etc/systemd/system/lou-update.timer ]] || first=false
+    check_path "$UPDATE_STATE"
+    [[ -d $UPDATE_STATE ]] || install -d -o root -g root -m 0700 "$UPDATE_STATE"
+    check_path "$RELEASES"
+    [[ -d $RELEASES ]] || install -d -o root -g root -m 0755 "$RELEASES"
+    configure_update_source || configured=false
+    # The updater units come from the installed release; replaced ones are backed up.
+    for unit in "${UPDATE_UNITS[@]}"; do
+        check_file "/etc/systemd/system/$unit"
+        if [[ -f /etc/systemd/system/$unit ]] && cmp -s -- "$APP/deploy/$unit" "/etc/systemd/system/$unit"; then continue; fi
+        [[ ! -f /etc/systemd/system/$unit ]] || backup_file "/etc/systemd/system/$unit"
+        UNIT_TEMP=$(mktemp --suffix=".${unit##*.}" /etc/systemd/system/lou.setup.XXXXXXXX)
+        install -o root -g root -m 0644 "$APP/deploy/$unit" "$UNIT_TEMP"
+        if [[ $unit == *.service ]]; then
+            systemd-analyze verify "$UNIT_TEMP" 2>/dev/null || die "systemd rejected the repository $unit."
+        fi
+        mv -T -- "$UNIT_TEMP" "/etc/systemd/system/$unit"
+        UNIT_TEMP=
+    done
+    systemctl daemon-reload
+    printf '\nAutomatic updates\n─────────────────\n\n'
+    printf '%s\n' 'Lou can periodically check the configured Git branch for new versions,' \
+        'build them separately, and deploy them after successful validation.' \
+        'Automatic updates fetch the branch daily, build it, restart Lou, verify' \
+        'health, and roll back application code if startup fails.' ''
+    if [[ $first == true && $configured == true ]]; then
+        if confirm 'Enable automatic updates?'; then systemctl enable --now lou-update.timer; fi
+    elif [[ $first == true ]]; then
+        info 'Automatic updates need an update source; left disabled.'
+    fi
+    # Reruns keep the administrator's earlier choice.
+    if systemctl is-enabled --quiet lou-update.timer; then
+        success 'Automatic updates: enabled'
+        systemctl list-timers lou-update.timer --no-pager 2>/dev/null | head -n 2 || true
+        info 'Disable: sudo systemctl disable --now lou-update.timer'
+    else
+        info 'Automatic updates: disabled. Enable: sudo systemctl enable --now lou-update.timer'
+    fi
+    [[ $configured == false ]] || info 'Manual update: sudo /opt/lou/deploy/update.sh (check only: --check)'
+}
+
+finished() {
+    run_step 9 'Finished'
     success 'Lou installed successfully'
     printf '\nService:  active and enabled\nData:     /var/lib/lou\nConfig:   /etc/lou/lou.env\nLogs:     sudo journalctl -u lou -f\n'
     info 'Configure your HTTPS reverse proxy/tunnel to 127.0.0.1:8787, including /ws upgrades.'
@@ -395,7 +524,10 @@ preflight() {
     [[ -d /run/systemd/system ]] || die 'A running systemd host is required (not a bare container/chroot).'
     command -v python3 >/dev/null || die 'Install python3 first: sudo apt-get install python3'
     command -v flock >/dev/null || die 'The Ubuntu util-linux package (flock) is required.'
-    for path in /opt /var/lib /etc/lou /etc/systemd/system "$APP"; do check_path "$path"; done
+    for path in /opt /var/lib /var/cache /etc/lou /etc/systemd/system "$APP" "$RELEASES" "$UPDATE_STATE"; do check_path "$path"; done
+    for path in "$RELEASES" "$UPDATE_STATE"; do
+        [[ ! -e $path || -d $path ]] || die "Expected a directory: $path"
+    done
     # The data directory is service-owned, but its ancestry must be trusted.
     [[ ! -L $DATA && ( ! -e $DATA || -d $DATA ) ]] || die 'Unexpected /var/lib/lou symlink or file.'
     for path in "$DATA/lou.db" "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace"; do
@@ -404,6 +536,8 @@ preflight() {
     check_file "$CONFIG/lou.env"
     check_file "$CONFIG/mcp.json"
     check_file "$UNIT"
+    check_file "$UPDATE_CONF"
+    for path in "${UPDATE_UNITS[@]}"; do check_file "/etc/systemd/system/$path"; done
     [[ -z $(systemctl show lou -p DropInPaths --value 2>/dev/null || true) ]] || die 'Existing lou.service drop-ins need manual administrator review before installation.'
     for path in "$APP" "$CONFIG"; do
         [[ ! -e $path || -d $path ]] || die "Expected a directory: $path"
@@ -443,10 +577,15 @@ main() {
     [[ $dry_run == false ]] || { info 'Dry run complete; no changes made.'; return; }
     [[ $EUID == 0 ]] || die 'Run with sudo ./deploy/setup.sh'
     [[ -t 0 ]] || die 'Run from an interactive terminal.'
-    check_file /run/lou-setup.lock
-    exec 9>/run/lou-setup.lock
+    check_file "$SETUP_LOCK"
+    exec 9>"$SETUP_LOCK"
     flock -n 9 || die 'Another Lou installer is running.'
     confirm 'Install/update Lou using this checkout?' || { info 'Setup cancelled.'; return; }
+    # Setup and the updater must never replace /opt/lou at the same time.
+    [[ -d $UPDATE_STATE ]] || install -d -o root -g root -m 0700 "$UPDATE_STATE"
+    check_file "$UPDATE_STATE/lock"
+    exec 6>>"$UPDATE_STATE/lock"
+    flock -n 6 || die 'A Lou update is running; retry when it finishes (journalctl -u lou-update).'
     trap cleanup EXIT
     trap 'failure $?' ERR
     trap 'warn "Setup cancelled."; failure 130' INT
@@ -501,19 +640,43 @@ main() {
         fi
     done
 
+    # Builds (and dependency install scripts) run as a separate account that
+    # cannot read /etc/lou or /var/lib/lou; it must not join the lou group.
+    if getent passwd "$BUILDER" >/dev/null; then
+        [[ $(id -u "$BUILDER") != 0 && $(getent passwd "$BUILDER" | cut -d: -f7) == /usr/sbin/nologin ]] \
+            || die "Existing $BUILDER user must be a non-root account with /usr/sbin/nologin."
+        if id -nG "$BUILDER" | tr ' ' '\n' | grep -qx lou; then die "$BUILDER must not be a member of the lou group."; fi
+    else
+        getent group "$BUILDER" >/dev/null || groupadd --system "$BUILDER"
+        useradd --system --gid "$BUILDER" --home-dir "$BUILD_CACHE" --no-create-home --shell /usr/sbin/nologin "$BUILDER"
+    fi
+    [[ $(getent group "$BUILDER" | cut -d: -f3) != 0 ]] || die "The $BUILDER group must not have GID 0."
+    check_path /var/cache
+    [[ ! -L $BUILD_CACHE && ( ! -e $BUILD_CACHE || -d $BUILD_CACHE ) ]] || die "Unexpected $BUILD_CACHE symlink or file."
+    install -d -o "$BUILDER" -g "$BUILDER" -m 0700 "$BUILD_CACHE"
+
     run_step 4 'Building a candidate application'
     if [[ ! -d /opt ]]; then install -d -o root -g root -m 0755 /opt; fi
     STAGE=$(mktemp -d /opt/.lou-build.XXXXXXXX)
     python3 "$SUPPORT" copy "$REPO" "$STAGE"
-    python3 "$SUPPORT" freeze "$STAGE" lou
-    (cd -- "$STAGE"; as_lou npm ci; as_lou npm run build -w @lou/server)
+    install -m 0600 -- "$STAGE/.lou-install-files.json" "$TEMP/manifest"
+    python3 "$SUPPORT" freeze "$STAGE" "$BUILDER"
+    local npm_bin
+    npm_bin=$(PATH=/usr/bin:/bin command -v npm)
+    build_in_sandbox "$STAGE" "$npm_bin" ci
+    build_in_sandbox "$STAGE" "$npm_bin" run build -w @lou/server
     [[ -f $STAGE/apps/server/dist/index.js && -f $STAGE/apps/server/dist/cli.js && -f $STAGE/apps/server/dist/drizzle/meta/_journal.json ]] || die 'Build outputs/migrations are missing.'
     python3 "$SUPPORT" freeze "$STAGE" root
+    python3 "$SUPPORT" verify-copy "$REPO" "$STAGE" "$TEMP/manifest" || die 'Source files changed during the build; refusing to install the candidate.'
+    # Records the deployed revision for the updater (absent for unknown sources).
+    python3 "$SUPPORT" release-from "$REPO" "$STAGE"
     success 'Candidate built; existing service has not been stopped.'
 
     configure
     deploy
     verify
+    configure_updates
+    finished
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

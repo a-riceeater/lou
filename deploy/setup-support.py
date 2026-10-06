@@ -206,6 +206,27 @@ def copy_source(source, destination):
     (destination / '.lou-install-files.json').write_text(json.dumps(installed))
 
 
+def verify_copy(source, destination, manifest):
+    """Installer counterpart of verify_export: the unprivileged build left the
+    copied sources (including the deploy scripts root runs later) intact."""
+    _, target = deployment_path(destination, ('stage',))
+    with os.fdopen(open_input(manifest)) as reader:
+        names = json.load(reader)
+    with os.fdopen(open_input(str(target / '.lou-install-files.json'))) as reader:
+        if json.load(reader) != names:
+            raise ValueError('candidate file manifest changed during the build')
+    for name in names:
+        p = Path(name)
+        if p.is_absolute() or '..' in p.parts or str(p) != name:
+            raise ValueError('invalid source manifest path')
+        with os.fdopen(open_input(str(Path(source) / p)), 'rb') as original, \
+                os.fdopen(open_input(str(target / p)), 'rb') as copy:
+            executable = [bool(os.fstat(f.fileno()).st_mode & 0o111) for f in (original, copy)]
+            if (executable[0] != executable[1]
+                    or hashlib.sha256(original.read()).digest() != hashlib.sha256(copy.read()).digest()):
+                raise ValueError('candidate source changed during the build')
+
+
 def input_file(value):
     path = Path(value)
     if not path.is_absolute() or str(path) != value or '..' in path.parts:
@@ -747,6 +768,8 @@ def main():
         data = json.load(sys.stdin)
         if data.get('status') != 'ok' or data.get('db') != 'ok':
             raise ValueError('health endpoint reports a degraded database')
+    elif action == 'verify-copy':
+        verify_copy(*args)
     elif action == 'move':
         move_tree(*args)
     elif action == 'remove':
