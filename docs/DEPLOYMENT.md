@@ -59,6 +59,7 @@ Lou installs an updater with the application. It fetches one configured branch, 
 sudo /opt/lou/deploy/update.sh            # show the update and ask before installing it
 sudo /opt/lou/deploy/update.sh --check    # report only; exit code 10 means an update is available
 sudo /opt/lou/deploy/update.sh --yes      # no prompt (what the timer runs)
+sudo /opt/lou/deploy/update.sh --status   # installed revision, last unattended run's result and log
 /opt/lou/deploy/update.sh --version       # installed revision
 ```
 
@@ -85,7 +86,8 @@ sudo systemctl disable --now lou-update.timer    # disable
 systemctl list-timers lou-update.timer           # next run
 systemctl status lou-update                      # last result
 journalctl -u lou-update                         # update logs
-sudo systemctl start lou-update                  # one unattended run now
+sudo systemctl start lou-update                  # one unattended run now (prints nothing; then:)
+sudo /opt/lou/deploy/update.sh --status          # what that run did
 ```
 
 Unattended runs never decide for you. With nothing new they log a short "up to date" and exit without rebuilding or restarting. They decline (exit 4, nothing changed) and wait for an interactive run when the installed code had local modifications or an unknown revision, the branch no longer contains the installed commit (rewritten history or another branch), the candidate already failed verification once, Lou is stopped, or the new version changes a systemd unit. Systemd units are only ever installed by setup: after updating the code interactively, rerun `sudo /opt/lou/deploy/setup.sh` to review and install them.

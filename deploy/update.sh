@@ -84,13 +84,13 @@ process.stdout.write(row && row.latest !== null ? String(row.latest) : "");'
 
 update_help() {
     printf '%s\n' 'Lou Updater' \
-        'Usage: sudo /opt/lou/deploy/update.sh [--check | --yes | --version | --help]' \
+        'Usage: sudo /opt/lou/deploy/update.sh [--check | --yes | --status | --version | --help]' \
         '' \
         '  (no option)  Show the available update and ask before installing it.' \
         '  --check      Report whether an update is available; changes nothing (exit 10 if available).' \
         '  --yes        Update without prompting (used by lou-update.service). Declines updates' \
         '               that need a decision: local modifications, rewritten history, unit changes.' \
-        '  --version    Print the installed Lou revision.' \
+        '  --status     Print the installed revision and how the last lou-update.service run ended.'         '  --version    Print the installed Lou revision.' \
         '' \
         'Source: /etc/lou/update.conf. Data in /var/lib/lou and config in /etc/lou are never changed.' \
         'Automatic updates: sudo systemctl enable --now lou-update.timer' \
@@ -138,6 +138,45 @@ print_version() {
         *' dirty') printf 'Lou revision %s (with local modifications)\n' "$(short "${info% *}")" ;;
         *' clean') printf 'Lou revision %s\n' "$(short "${info% *}")" ;;
         *) printf 'Lou revision unknown (installed before update tracking)\n' ;;
+    esac
+}
+
+# `systemctl start lou-update` prints nothing (its output goes to the journal),
+# so this reports the installed revision and the outcome and log of the last run.
+print_status() {
+    local state code ended invocation
+    print_version
+    state=$(systemctl show lou-update.service -p ActiveState --value 2>/dev/null || true)
+    code=$(systemctl show lou-update.service -p ExecMainStatus --value 2>/dev/null || true)
+    ended=$(systemctl show lou-update.service -p ExecMainExitTimestamp --value 2>/dev/null || true)
+    invocation=$(systemctl show lou-update.service -p InvocationID --value 2>/dev/null || true)
+    if [[ $state == activating ]]; then
+        printf 'Last update run: in progress (follow it: journalctl -fu lou-update)
+'
+        return 0
+    fi
+    if [[ -z $ended ]]; then
+        printf 'Last update run: none since boot (start one: sudo systemctl start lou-update)
+'
+        return 0
+    fi
+    printf 'Last update run: %s, %s
+' "$ended" "$(exit_meaning "$code")"
+    [[ $invocation =~ ^[0-9a-f]{32}$ ]] || return 0
+    printf '
+'
+    journalctl "_SYSTEMD_INVOCATION_ID=$invocation" --no-pager -o cat 2>/dev/null | sanitize || true
+}
+
+exit_meaning() {
+    case $1 in
+        0) printf 'finished (updated, or already up to date)' ;;
+        "$EXIT_UNCHANGED") printf 'failed before activation; installed Lou unchanged' ;;
+        "$EXIT_ROLLED_BACK") printf 'the new release failed; previous version restored' ;;
+        "$EXIT_ATTENTION") printf 'recovery failed or was withheld; administrator needed' ;;
+        "$EXIT_DECISION") printf 'declined; run sudo /opt/lou/deploy/update.sh to decide' ;;
+        "$EXIT_BUSY") printf 'skipped; another update or setup was running' ;;
+        *) printf 'exited with status %s' "${1:-unknown}" ;;
     esac
 }
 
@@ -591,6 +630,7 @@ update_main() {
         case $arg in
             --help|-h) update_help; return 0 ;;
             --version) print_version; return 0 ;;
+            --status) print_status; return 0 ;;
             --check) MODE=check ;;
             --yes|-y) ASSUME_YES=true ;;
             *) update_help >&2; error "Unknown option: $arg"; return "$EXIT_USAGE" ;;

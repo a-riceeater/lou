@@ -556,6 +556,28 @@ class UpdaterFlowTests(TreeTest):
         self.assertNotIn('stop lou', self.syslog())
         self.assertEqual(self.stages(), [])
 
+    def test_status_reports_the_last_unattended_run_and_its_log(self):
+        invocation = '0' * 31 + '7'
+        result = self.run_flow(rf'''
+            systemctl() {{
+                case $4 in
+                    ActiveState) printf inactive ;;
+                    ExecMainStatus) printf 4 ;;
+                    ExecMainExitTimestamp) printf 'Mon 2026-10-05 03:12:00 UTC' ;;
+                    InvocationID) printf {invocation} ;;
+                esac
+            }}
+            journalctl() {{ [[ $1 == _SYSTEMD_INVOCATION_ID={invocation} ]] && printf 'Automatic update declined\n'; }}
+            print_status''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Last update run: Mon 2026-10-05 03:12:00 UTC, declined; run sudo /opt/lou/deploy/update.sh to decide', result.stdout)
+        self.assertIn('Automatic update declined', result.stdout)
+
+    def test_status_without_a_run_since_boot(self):
+        result = self.run_flow('print_status')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Last update run: none since boot', result.stdout)
+
     def test_successful_update_activates_backs_up_and_prunes(self):
         sqlite_image(self.root / 'var/lib/lou/lou.db')
         database = (self.root / 'var/lib/lou/lou.db').read_bytes()
