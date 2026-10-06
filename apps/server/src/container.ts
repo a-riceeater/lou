@@ -190,7 +190,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   const mcp = new McpManager(registry, integrations, logger);
 
   const userOfRun = (runId: string | undefined) => (runId ? db.select({ u: agentRuns.userId }).from(agentRuns).where(eq(agentRuns.id, runId)).get()?.u : undefined);
-  const recorder = new ToolCallRecorder(db, audit, approvals_, userOfRun);
+  const recorder = new ToolCallRecorder(db, audit, approvals_, userOfRun, logger);
 
   let executorRef: ToolExecutor | undefined;
   const workflows = new WorkflowEngine(db, registry, () => executorRef!, audit, logger, model, () => owner.name);

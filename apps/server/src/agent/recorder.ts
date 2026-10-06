@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import type { ApprovalManager } from "../approvals/manager";
 import type { AuditLog } from "../core/audit";
 import type { Db } from "../db/client";
+import type { Logger } from "../logger";
 import { toolCalls } from "../db/schema";
 
 const MAX_STORED_OUTPUT = 20_000;
@@ -17,6 +18,7 @@ export class ToolCallRecorder {
     private readonly audit: AuditLog,
     private readonly approvals: ApprovalManager,
     private readonly userOfRun: (runId: string | undefined) => string | undefined,
+    private readonly logger?: Logger,
   ) {}
 
   started(record: ToolCallRecord): void {
@@ -52,6 +54,11 @@ export class ToolCallRecorder {
       })
       .where(eq(toolCalls.id, id))
       .run();
+    if (outcome.status === "failed" && outcome.error) {
+      // The model only paraphrases tool errors to the user; the exact cause belongs in the server log.
+      const { code, message, details } = outcome.error;
+      this.logger?.warn({ toolId: record?.toolId, runId: record?.runId, toolCallId: id, code, details }, `tool failed: ${message}`);
+    }
     if (!record) return;
 
     const action =
