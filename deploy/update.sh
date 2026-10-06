@@ -389,8 +389,8 @@ lou_property() { systemctl show lou -p "$1" --value 2>/dev/null || true; }
 
 # Distinguishes "started", "answers /health" and "stays up" before success.
 verify_service() {
-    local attempt state pid restarts
-    for ((attempt = 0; attempt < HEALTH_SECONDS; attempt++)); do
+    local attempt state pid restarts deadline=$((SECONDS + HEALTH_SECONDS))
+    for ((attempt = 0; attempt < HEALTH_SECONDS && SECONDS < deadline; attempt++)); do
         state=$(lou_property ActiveState)
         if [[ $state == failed ]]; then
             warn 'lou.service failed to start.'
@@ -421,7 +421,8 @@ activate() {
     PHASE=activate
     ACTIVATED_AT=$(date +%s)
     # Brief downtime starts here: graceful SIGTERM via systemd, then two renames.
-    if [[ $WAS_ACTIVE == true ]]; then systemctl stop lou; fi
+    # Also stops a crash-looping service from restarting during the swap.
+    systemctl stop lou
     support move "$APP" "$PREVIOUS"
     support move "$STAGE" "$APP"
     systemctl reset-failed lou >/dev/null 2>&1 || true
