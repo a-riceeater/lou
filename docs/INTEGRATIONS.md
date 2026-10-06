@@ -4,7 +4,12 @@ Preferred order (ARCHITECTURE.md §4.1): direct official API → official MCP �
 
 ## Gmail (direct API)
 
-**Setup:** Google Cloud project → enable Gmail API → OAuth consent screen (add scopes `openid email profile gmail.readonly gmail.compose`) → OAuth client of type **Web application** with redirect URI `${LOU_PUBLIC_URL}/oauth/google/callback`. Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. While the consent screen is in "Testing", add your Google accounts as test users.
+**Setup:** Google Cloud project → enable Gmail API → OAuth consent screen (add scopes `openid email profile gmail.readonly gmail.compose`) → OAuth client of type **Web application** with redirect URI `${LOU_PUBLIC_URL}/oauth/google/callback`. While the consent screen is in "Testing", add your Google accounts as test users.
+
+Give Lou the OAuth client in one of these ways:
+
+- **Windows app (easiest):** Accounts → **Add Gmail**. Until Gmail is set up, this opens a dialog that walks through the steps above, links to each Google Cloud page, and shows the exact redirect URI with a copy option. You paste the Client ID and secret, or the client JSON file Google offers as a download. The server checks them with Google's token endpoint and stores the secret encrypted (AES-256-GCM with `LOU_MASTER_KEY`). The secret is never shown again or returned to any client. **Gmail setup** reopens the dialog to replace the client. Gmail accounts connected with a different client are marked **Needs you to sign in again**.
+- **Environment:** set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. The installer offers this prompt. Values from the environment take precedence over a client saved from the app.
 
 **Connect:** Accounts → Add Gmail (opens your browser; PKCE + single-use state). Connect as many accounts as you like. Each gets its own account ID, status, and encrypted tokens. Access tokens refresh automatically. A revoked or expired refresh token marks the account **Needs you to sign in again** and the agent reports it in plain language.
 

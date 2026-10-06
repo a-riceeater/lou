@@ -54,8 +54,8 @@ A signed-in device can also create codes from **Devices → Add a device**.
 1. Google Cloud Console → APIs & Services → enable the **Gmail API**.
 2. OAuth consent screen: External, add yourself as a test user, add scopes `gmail.readonly` and `gmail.compose`.
 3. Credentials → OAuth client ID → **Web application**, with redirect URI `http://localhost:8787/oauth/google/callback`.
-4. In `apps/server/.env` set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `LOU_PUBLIC_URL=http://localhost:8787`.
-5. In the app: **Accounts → Add Gmail**. Repeat for more accounts.
+4. In the app: **Accounts → Add Gmail**, then paste the Client ID and secret into the setup dialog. Or set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `apps/server/.env`. Either way, keep `LOU_PUBLIC_URL=http://localhost:8787`.
+5. **Add Gmail** opens Google sign-in. Repeat for more accounts.
 
 ### Database migrations
 

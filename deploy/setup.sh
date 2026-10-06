@@ -263,7 +263,7 @@ PY
         esac
         write_value LOU_GMAIL_POLL_SECONDS 120
         write_value LOU_IMPROVEMENT_ENABLED true
-        if confirm 'Configure Google OAuth credentials for Gmail now?'; then
+        if confirm 'Configure Google OAuth credentials for Gmail now (or later in the app under Accounts → Add Gmail)?'; then
             prompt name 'Google client ID' ''
             write_value GOOGLE_CLIENT_ID "$name"
             prompt_secret api_key 'Google client secret'
