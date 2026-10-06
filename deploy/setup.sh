@@ -414,8 +414,10 @@ verify() {
     systemctl is-active --quiet lou || die 'Lou exited during verification.'
 }
 
+# Sets UPDATE_CONFIGURED; runs outside conditionals so set -e applies throughout.
 configure_update_source() {
     local conf detected url='' branch=''
+    UPDATE_CONFIGURED=true
     check_file "$UPDATE_CONF"
     if [[ -f $UPDATE_CONF ]]; then
         if conf=$(python3 "$SUPPORT" update-config "$UPDATE_CONF" 2>/dev/null); then
@@ -432,7 +434,8 @@ configure_update_source() {
         prompt url 'Update repository URL (blank to skip)' "$url"
         if [[ -z $url ]]; then
             warn 'No update source configured; rerun setup to enable updates later.'
-            return 1
+            UPDATE_CONFIGURED=false
+            return 0
         fi
         python3 "$SUPPORT" update-url "$url" >/dev/null 2>&1 && break
         warn 'Enter an https:// Git URL without credentials, e.g. https://github.com/a-riceeater/lou.git'
@@ -457,13 +460,13 @@ configure_update_source() {
 
 configure_updates() {
     run_step 8 'Configuring updates'
-    local unit first=true configured=true
+    local unit first=true UPDATE_CONFIGURED
     [[ ! -e /etc/systemd/system/lou-update.timer ]] || first=false
     check_path "$UPDATE_STATE"
     [[ -d $UPDATE_STATE ]] || install -d -o root -g root -m 0700 "$UPDATE_STATE"
     check_path "$RELEASES"
     [[ -d $RELEASES ]] || install -d -o root -g root -m 0755 "$RELEASES"
-    configure_update_source || configured=false
+    configure_update_source
     # The updater units come from the installed release; replaced ones are backed up.
     for unit in "${UPDATE_UNITS[@]}"; do
         check_file "/etc/systemd/system/$unit"
@@ -483,7 +486,7 @@ configure_updates() {
         'build them separately, and deploy them after successful validation.' \
         'Automatic updates fetch the branch daily, build it, restart Lou, verify' \
         'health, and roll back application code if startup fails.' ''
-    if [[ $first == true && $configured == true ]]; then
+    if [[ $first == true && $UPDATE_CONFIGURED == true ]]; then
         if confirm 'Enable automatic updates?'; then systemctl enable --now lou-update.timer; fi
     elif [[ $first == true ]]; then
         info 'Automatic updates need an update source; left disabled.'
@@ -496,7 +499,7 @@ configure_updates() {
     else
         info 'Automatic updates: disabled. Enable: sudo systemctl enable --now lou-update.timer'
     fi
-    [[ $configured == false ]] || info 'Manual update: sudo /opt/lou/deploy/update.sh (check only: --check)'
+    [[ $UPDATE_CONFIGURED == false ]] || info 'Manual update: sudo /opt/lou/deploy/update.sh (check only: --check)'
 }
 
 finished() {
