@@ -131,7 +131,7 @@ describe("codex app server lifecycle", () => {
 
   it("starts, initializes, and relaunches locked down (features and MCP servers disabled)", async () => {
     const { manager, mock } = setup({
-      features: ["shell_tool", "unified_exec", "apps", "made_up_feature"],
+      features: ["shell_tool", "unified_exec", "apps", "made_up_feature", "code_mode_host"],
       mcpServers: [
         { name: "node_repl", tools: 3 },
         { name: "codex_apps", tools: 40, builtinFeature: "apps" },
@@ -149,6 +149,8 @@ describe("codex app server lifecycle", () => {
     expect(locked.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
     for (const f of ["shell_tool", "unified_exec", "apps"]) expect(locked.join(" ")).toContain(`--disable ${f}`);
     expect(locked.join(" ")).not.toContain("made_up_feature");
+    // Code-only models call Lou's tools through the code-mode host; it must be on.
+    expect(locked.join(" ")).toContain("--enable code_mode_host");
     expect(locked).toContain("mcp_servers.node_repl.enabled=false");
     // Built-in servers go away with their feature and must not be disabled by name.
     expect(locked.join(" ")).not.toContain("codex_apps");

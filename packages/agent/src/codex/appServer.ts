@@ -99,6 +99,15 @@ export const LOCKDOWN_FEATURES = [
   "request_permissions_tool",
 ];
 
+/**
+ * Codex features Lou's tools depend on. Models that are "code mode only" in the
+ * Codex catalog call dynamic tools from a JavaScript `exec` cell run by the
+ * code-mode host; with the host off, every Lou tool call fails inside Codex
+ * ("code-mode host is disabled") before it reaches Lou. The cell can only call
+ * the thread's dynamic tools, so Lou's policy and approvals still govern them.
+ */
+export const REQUIRED_FEATURES = ["code_mode_host"];
+
 /** Arguments that must never be passed, whatever the configuration says. */
 const FORBIDDEN_ARGS = ["--dangerously-bypass-approvals-and-sandbox", "--yolo", "danger-full-access"];
 
@@ -419,6 +428,7 @@ export class CodexAppServerManager {
     // If the listing is unavailable, fall back to the core capabilities every version has.
     const toDisable = known.size ? LOCKDOWN_FEATURES.filter((f) => known.has(f)) : ["shell_tool", "unified_exec", "view_image"];
     for (const f of toDisable) args.push("--disable", f);
+    for (const f of REQUIRED_FEATURES) if (known.has(f)) args.push("--enable", f);
     // Keep the user's personal Codex AGENTS.md / project docs out of Lou's prompt.
     args.push("-c", "project_doc_max_bytes=0");
     return args;
