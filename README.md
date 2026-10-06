@@ -56,7 +56,7 @@ Enter your public HTTPS URL and the code in the Windows client (build/run instru
 
 To control Spotify, run `sudo ./deploy/setup-spotify.sh` (or use **Accounts → Spotify → Set up** in the Windows app), then connect your account. See [Spotify setup](docs/INTEGRATIONS.md#spotify-web-api--spotify-connect).
 
-For updates, rerun `sudo ./deploy/setup.sh` from an updated checkout; it preserves `/var/lib/lou` and offers to keep your configuration. See [deployment instructions](docs/DEPLOYMENT.md) for HTTPS examples, backups, recovery and the manual installation fallback. Use `./deploy/setup.sh --help` for installer options.
+For updates, run `sudo /opt/lou/deploy/update.sh` (or `--check` to only look). It builds the new version beside the running one, then restarts Lou, verifies health and restores the previous code if startup fails. Setup can also enable daily automatic updates (`lou-update.timer`, opt-in). Rerunning `sudo ./deploy/setup.sh` from an updated checkout still works and preserves `/var/lib/lou` and your configuration. See [deployment instructions](docs/DEPLOYMENT.md) for HTTPS examples, backups, recovery and the manual installation fallback. Use `./deploy/setup.sh --help` for installer options.
 
 ## Quick start (development)
 

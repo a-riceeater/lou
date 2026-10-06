@@ -20,9 +20,10 @@ The installer changes:
 
 - Required apt packages (`ca-certificates`, `curl`, `git`, `build-essential`, `python3`); NodeSource Node 24 if `/usr/bin/node` is below 22.12 or absent. An existing compatible system Node is retained; npm 10+ is required.
 - The `lou` system account, with home `/var/lib/lou` and shell `/usr/sbin/nologin`.
-- Root-owned application code in `/opt/lou`, built with `npm ci` and `npm run build -w @lou/server`. Builds run as `lou` in a separate candidate directory before service downtime. Only tracked checkout files are copied (including local edits to tracked files); `.git`, dependencies, build outputs, local env files and data are excluded. An installed snapshot keeps a file manifest so setup can also be rerun from `/opt/lou`.
+- Root-owned application code in `/opt/lou`, built with `npm ci` and `npm run build -w @lou/server`. Builds run in a separate candidate directory before service downtime, as the `lou-build` system account inside a transient sandboxed systemd unit (see [Update trust model](#update-trust-model)). Only tracked checkout files are copied (including local edits to tracked files); `.git`, dependencies, build outputs, local env files and data are excluded. An installed snapshot keeps a file manifest so setup can also be rerun from `/opt/lou`, and `/opt/lou/.lou-release.json` records the checkout's commit (and whether it had local edits) for the updater.
 - `/var/lib/lou` (`lou:lou`, `0700`), containing SQLite, learned skills, and Codex state; `/etc/lou/lou.env` (`root:lou`, `0640`); optionally protected MCP files.
 - The repository's hardened `/etc/systemd/system/lou.service`, enabled and restarted after installation.
+- The updater: the `lou-build` account with its npm cache `/var/cache/lou-build`, the update source `/etc/lou/update.conf`, `/var/lib/lou-updater` (root, `0700`), `/opt/lou-releases`, and the `lou-update.service`/`lou-update.timer` units. The timer is enabled only if you opt in; see [Updates](#updates).
 
 It does **not** install/configure an HTTPS proxy, tunnel, DNS, firewall, or public listener. Lou stays on `127.0.0.1:8787`. Configure HTTPS as described below, forwarding WebSocket upgrades on `/ws`. A failed external health check is a warning if the local service/database are healthy; it is not proof that DNS/TLS is configured.
 
@@ -40,15 +41,92 @@ Before upgrading, back up **both** `/var/lib/lou` and `/etc/lou/lou.env`, with a
 
 Service management: `sudo systemctl status lou`, `sudo systemctl restart lou`, `sudo systemctl stop lou`. Logs: `sudo journalctl -u lou -f`. Pair using the command in section 7 below.
 
-### Installer checks (no root required)
+### Installer and updater checks (no root required, Linux)
 
 ```bash
-bash -n deploy/setup.sh
-python3 -B -m unittest discover -s deploy -p 'test_setup.py'
-shellcheck deploy/setup.sh # if installed
+bash -n deploy/setup.sh deploy/update.sh
+python3 -B -m unittest discover -s deploy -p 'test_*.py'
+shellcheck -x deploy/setup.sh deploy/update.sh # if installed
 ```
 
-The tests exercise parsing, quoting, path/link rejection, snapshot reruns, MCP validation, cancellation and simulated health failure. They do not install packages or start systemd on the developer's machine; an actual Ubuntu deployment still needs operational verification.
+The tests exercise parsing, quoting, path/link rejection, snapshot reruns, MCP validation, cancellation and simulated health failure, and for the updater: the path allowlist, symlink handling, release/backup retention, export tampering checks, locking, no-update and update detection, failed builds, failed health checks with rollback, withheld rollback after migrations, and interrupted activation. They run in temporary trees with mocked systemd; they do not install packages or start services. An actual Ubuntu deployment still needs operational verification.
+
+## Updates
+
+Lou installs an updater with the application. It fetches one configured branch, builds the new revision beside the running installation, and replaces the application only after dependencies, build and checks succeed. It never modifies `/var/lib/lou` or `/etc/lou`: the database, learned skills, `lou.env`, master key, OAuth connections, MCP configuration and paired devices are untouched (the database is only read, to back it up).
+
+```bash
+sudo /opt/lou/deploy/update.sh            # show the update and ask before installing it
+sudo /opt/lou/deploy/update.sh --check    # report only; exit code 10 means an update is available
+sudo /opt/lou/deploy/update.sh --yes      # no prompt (what the timer runs)
+/opt/lou/deploy/update.sh --version       # installed revision
+```
+
+An interactive run shows the current and available revisions, the number of commits and their subjects, and any database migrations, then asks for confirmation:
+
+```text
+[1/6] Preparing release...          export the revision into /opt/.lou-build.*
+[2/6] Installing dependencies...    npm ci (sandboxed, as lou-build)
+[3/6] Building Lou...               build, verify sources, validate lou.env against the new code
+[4/6] Creating pre-update database backup...
+[5/6] Activating release...         stop Lou, swap directories, start Lou
+[6/6] Verifying Lou...              active, /health ok, still up and not restarted after 10 s
+```
+
+Lou keeps running through steps 1-4; a network, Git, `npm ci`, build, validation or backup failure removes only that run's candidate and leaves the installed Lou running unchanged. Downtime is the graceful stop, two directory renames and startup.
+
+### Automatic updates
+
+Setup asks once whether to enable automatic updates (default **no**) and keeps your answer on reruns. The timer runs `lou-update.service` daily at 03:00 plus a random delay of up to two hours, and catches up after downtime.
+
+```bash
+sudo systemctl enable --now lou-update.timer     # enable
+sudo systemctl disable --now lou-update.timer    # disable
+systemctl list-timers lou-update.timer           # next run
+systemctl status lou-update                      # last result
+journalctl -u lou-update                         # update logs
+sudo systemctl start lou-update                  # one unattended run now
+```
+
+Unattended runs never decide for you. With nothing new they log a short "up to date" and exit without rebuilding or restarting. They decline (exit 4, nothing changed) and wait for an interactive run when the installed code had local modifications or an unknown revision, the branch no longer contains the installed commit (rewritten history or another branch), the candidate already failed verification once, Lou is stopped, or the new version changes a systemd unit. Systemd units are only ever installed by setup: after updating the code interactively, rerun `sudo /opt/lou/deploy/setup.sh` to review and install them.
+
+Exit codes, for monitoring: `0` updated or up to date; `1` failed before activation (Lou unchanged); `2` the new release failed and the previous one was restored; `3` recovery failed or was withheld (administrator needed); `4` declined, needs a decision; `10` `--check` found an update; `75` another update or setup is running (treated as success by the unit).
+
+### Update source
+
+`/etc/lou/update.conf` (root-owned) holds `LOU_UPDATE_REMOTE`, an HTTPS Git URL without credentials, and `LOU_UPDATE_BRANCH`. Setup suggests the upstream of the checkout you install from and asks you to confirm it; on reruns it keeps the existing file. Environment variables never change the source. Only public HTTPS repositories are supported: the updater does not prompt for credentials, and other transports are refused.
+
+### Update trust model
+
+- **Git**: the updater fetches by URL into its own root-owned bare mirror, `/var/lib/lou-updater/source.git`, with a clean environment, hooks disabled, HTTPS only (normal TLS verification), no tags or submodules, `fsck` on received objects and a time limit. The working tree of `/opt/lou` is never used; there is no `git pull`, `reset` or `clean`. The revision is exported with `git archive` and unpacked as regular files only (symlinks, hard links and escaping paths are rejected). Lou does not sign commits or releases, so trust rests on the configured HTTPS remote and branch; unattended updates accept fast-forwards only. Signature verification would slot in where the candidate is classified (`classify` in `deploy/update.sh`).
+- **Build**: `npm ci` (lockfile only; never `npm update`) and the build run as `lou-build` in a transient systemd unit that can write only the candidate and its npm cache, cannot see `/etc/lou`, `/var/lib/lou`, `/var/lib/lou-updater`, home directories, `/media`, `/mnt` or `/srv`, and is stopped together with any leftover processes. Dependency lifecycle scripts therefore cannot read Lou's secrets during a build. After the build the tree becomes root-owned and every source file is compared with the revision, so a build cannot alter `deploy/update.sh` or other code that root runs later. The built code still runs as `lou` once activated: updating means trusting the branch and its locked dependencies.
+- **Runtime**: `lou` never gains write access to `/opt/lou`. If the new revision needs a newer Node.js than installed, the update stops before activation; upgrade Node deliberately by rerunning setup. The updater never runs `apt`.
+- **Updater unit**: root, but sandboxed: no access to home directories, `/media`, `/mnt` or `/srv`; `/var/lib/lou` and `/etc/lou` are read-only; writes are limited to `/opt` and its state directory, with a reduced capability set. Database reads run as `lou` in their own transient unit without network access.
+- **Concurrency**: one `flock` lock in `/var/lib/lou-updater` serializes manual runs, the timer and setup.
+
+### Database migrations, backups and rollback
+
+Lou applies pending Drizzle migrations at startup, in a single transaction. Older code does not refuse a newer schema; it ignores migrations it does not know, which can leave it misreading the data. So:
+
+- Before activation the updater takes a consistent online SQLite backup (read as `lou` while Lou runs) into `/var/lib/lou-updater/backups/lou-pre-update-<time>-<old>-<new>.db` (root, `0600`). The update stops if the backup fails. The three newest updater backups are kept; other files there are never touched.
+- If the new release fails to start, crashes, restarts, or fails `/health` within 90 seconds, the updater stops it and restores the previous application code. If the update added migrations, it first checks the database: when the new migrations were **not** applied (the transaction rolled back), restoring code is safe and proceeds; when they were, or this cannot be determined, **rollback is withheld**: Lou stays stopped on the new release and the updater prints the paths below (exit 3).
+- The database is never restored automatically; that would discard writes made since the backup.
+- The previous release and one more are kept in `/opt/lou-releases/` after a successful update; older ones there are removed. A failed candidate is recorded in `/var/lib/lou-updater/failed-revision` and not retried unattended.
+
+### Recovering from a failed update
+
+The updater prints the paths involved. To return to the previous release after a withheld rollback (this discards database changes made since the backup):
+
+```bash
+sudo systemctl stop lou
+sudo mv -T /opt/lou /opt/lou-releases/failed-$(date +%s)        # keep the failed release for review
+sudo mv -T /opt/lou-releases/<previous release> /opt/lou
+sudo install -o lou -g lou -m 0600 /var/lib/lou-updater/backups/<backup>.db /var/lib/lou/lou.db
+sudo rm -f /var/lib/lou/lou.db-wal /var/lib/lou/lou.db-shm       # stale journal of the replaced database
+sudo systemctl start lou
+```
+
+Alternatively fix forward: once a corrected revision is on the branch, run `sudo /opt/lou/deploy/update.sh`. Investigate with `sudo journalctl -u lou -n 100` and `journalctl -u lou-update`. If `/opt/lou` is missing after an interruption, the previous release is in `/opt/lou-releases/`; rename the newest entry back to `/opt/lou`.
 
 ## Manual installation (advanced fallback)
 
@@ -134,7 +212,7 @@ The code is valid for 10 minutes. The Python launcher parses the environment fil
 
 ## Upgrading
 
-For installer-managed snapshots, rerun `sudo ./deploy/setup.sh` from an updated checkout; `/opt/lou` has no `.git` directory. For a manual git installation:
+For installer-managed snapshots, use the [updater](#updates) (`sudo /opt/lou/deploy/update.sh`), or rerun `sudo ./deploy/setup.sh` from an updated checkout; `/opt/lou` has no `.git` directory. Installations made before the updater existed get it by rerunning the current setup from an updated checkout once: it keeps `/var/lib/lou` and your configuration, records the installed revision, installs the updater and asks whether to enable automatic updates. For a manual git installation (the updater does not support these):
 
 ```bash
 cd /opt/lou
