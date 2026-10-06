@@ -12,7 +12,7 @@ cd lou
 sudo ./deploy/setup.sh
 ```
 
-Python 3 must already be available for the preflight checks (on a minimal image: `sudo apt-get update && sudo apt-get install python3`). The installer prompts for the public HTTPS origin, proxy trust, name/timezone, encryption key and model provider. OpenAI API keys and optional Google/Instagram credentials are read without echo. For Codex it checks a system-wide executable and authentication **as `lou`**, and offers device authentication without changing the account's `nologin` shell. It can import an MCP JSON file and securely prompt for referenced environment secrets, or install a disabled example for later editing.
+Python 3 must already be available for the preflight checks (on a minimal image: `sudo apt-get update && sudo apt-get install python3`). The installer prompts for the public HTTPS origin, proxy trust, name/timezone, encryption key and model provider. OpenAI API keys and optional Google/Instagram/Spotify credentials are read without echo. For Codex it checks a system-wide executable and authentication **as `lou`**, and offers device authentication without changing the account's `nologin` shell. It can import an MCP JSON file and securely prompt for referenced environment secrets, or install a disabled example for later editing.
 
 `./deploy/setup.sh --help` describes the options. `--dry-run` performs read-only host/path checks and prints the plan; it does not simulate package installation or a successful build. Setup is interactive; there is no unattended mode.
 
@@ -25,6 +25,10 @@ The installer changes:
 - The repository's hardened `/etc/systemd/system/lou.service`, enabled and restarted after installation.
 
 It does **not** install/configure an HTTPS proxy, tunnel, DNS, firewall, or public listener. Lou stays on `127.0.0.1:8787`. Configure HTTPS as described below, forwarding WebSocket upgrades on `/ws`. A failed external health check is a warning if the local service/database are healthy; it is not proof that DNS/TLS is configured.
+
+### Spotify
+
+`sudo ./deploy/setup-spotify.sh` configures Spotify on an installed server without rerunning the full installer. It prints the exact redirect URI to register in the Spotify Developer Dashboard (`${LOU_PUBLIC_URL}/oauth/spotify/callback`) and reads the Client ID and secret, without echoing the secret. It verifies them with Spotify, writes `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` to `/etc/lou/lou.env` after a protected backup, validates the configuration, then restarts Lou and waits until `/health` reports Spotify as configured. `--remove` deletes the credentials. Your HTTPS proxy must forward `/oauth/spotify/callback` to Lou like the other OAuth callbacks. Then connect from the Windows app (Accounts → Spotify). See [INTEGRATIONS.md](INTEGRATIONS.md#spotify-web-api--spotify-connect).
 
 ### Reruns, failures and backups
 

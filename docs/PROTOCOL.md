@@ -81,7 +81,9 @@ The signature covers the exact transmitted string, so no cross-language canonica
 | `GET /api/history` | Recent runs with outcome |
 | `GET /api/approvals?status=pending` · `GET /api/approvals/:id` | Approvals |
 | `POST /api/approvals/:id/resolve` `{ decision, actionHash, edits? }` | Approve (optionally with edits to editable fields) or reject |
-| `GET /api/accounts` · `POST /api/accounts/{google,instagram}/connect` · `POST /api/accounts/:id/check` · `DELETE /api/accounts/:id` | Accounts |
+| `GET /api/accounts` · `POST /api/accounts/{google,instagram,spotify}/connect` · `POST /api/accounts/:id/check` · `DELETE /api/accounts/:id` | Accounts |
+| `GET /api/spotify` · `POST /api/spotify/app` `{ clientId, clientSecret }` · `DELETE /api/spotify/app` | Spotify status (`not_configured` · `disconnected` · `connected` · `needs_reauth` · `unavailable`, redirect URI, account) and app credentials from the setup dialog (verified with Spotify, secret stored encrypted, never returned) |
+| `GET /api/spotify/player` · `POST /api/spotify/player` `{ action, volumePercent? }` (action: `play` · `pause` · `next` · `previous` · `volume`) | Now Playing remote: cached player view (3 s) and direct controls |
 | `GET /api/devices` · `POST /api/devices/pairing-codes` · `POST /api/devices/:id/revoke` | Devices |
 | `GET /api/skills` · `GET /api/skills/:id` · `POST /api/skills` · `POST /api/skills/:id/enable` · `POST /api/skills/:id/rollback` · `POST /api/skills/versions/:id/activate` | Skills |
 | `GET/POST /api/memories` · `PATCH/DELETE /api/memories/:id` | Memory |

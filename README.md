@@ -40,7 +40,7 @@ cd lou
 sudo ./deploy/setup.sh
 ```
 
-Follow the prompts for your public HTTPS URL, name/timezone, master encryption key, and model provider: **OpenAI API** (API key) or **Codex CLI** (sign in as the `lou` service user). Gmail, Instagram and MCP configuration are optional. Setup installs the required dependencies, builds Lou in `/opt/lou`, writes protected configuration to `/etc/lou/lou.env`, and enables the systemd service. Back up that configuration and `/var/lib/lou`, including the master key.
+Follow the prompts for your public HTTPS URL, name/timezone, master encryption key, and model provider: **OpenAI API** (API key) or **Codex CLI** (sign in as the `lou` service user). Gmail, Instagram, Spotify and MCP configuration are optional. Setup installs the required dependencies, builds Lou in `/opt/lou`, writes protected configuration to `/etc/lou/lou.env`, and enables the systemd service. Back up that configuration and `/var/lib/lou`, including the master key.
 
 Configure your HTTPS reverse proxy or tunnel to forward to `127.0.0.1:8787`, including WebSocket upgrades on `/ws`. The installer leaves DNS, TLS and firewall configuration to you; an external health warning can mean this step is still pending.
 
@@ -53,6 +53,8 @@ sudo -u lou -H python3 /opt/lou/deploy/setup-support.py cli pair
 ```
 
 Enter your public HTTPS URL and the code in the Windows client (build/run instructions below). Pairing codes expire after 10 minutes. View logs with `sudo journalctl -u lou -f`.
+
+To control Spotify, run `sudo ./deploy/setup-spotify.sh` (or use **Accounts → Spotify → Set up** in the Windows app), then connect your account. See [Spotify setup](docs/INTEGRATIONS.md#spotify-web-api--spotify-connect).
 
 For updates, rerun `sudo ./deploy/setup.sh` from an updated checkout; it preserves `/var/lib/lou` and offers to keep your configuration. See [deployment instructions](docs/DEPLOYMENT.md) for HTTPS examples, backups, recovery and the manual installation fallback. Use `./deploy/setup.sh --help` for installer options.
 
@@ -88,6 +90,7 @@ dotnet test --project apps/windows/tests/Lou.Agent.Tests/Lou.Agent.Tests.csproj
 npx tsx scripts/e2e-windows.ts                        # live: real Lou.exe ↔ in-process server
 npx tsx scripts/e2e-codex.ts                          # live: real Codex CLI provider (uses your codex login)
 npx tsx scripts/e2e-windows-codex.ts                  # live: Windows palette → Codex, driven via WebView2 DevTools
+LOU_SPOTIFY_E2E=1 npx tsx --env-file=apps/server/.env scripts/e2e-spotify.ts   # live, opt-in: your connected Spotify account
 ```
 
 ## Status
@@ -99,6 +102,7 @@ npx tsx scripts/e2e-windows-codex.ts                  # live: Windows palette �
 | Windows host (tray, Alt+Space, palette, main window, WebView2 bridge, DPAPI, signed commands) | Implemented; live agent ↔ server check passes |
 | Skills, memory, improvement proposals, workflows, event pipeline | Implemented and tested |
 | Instagram (OAuth, webhooks, reply approval) | Implemented; needs a Meta app to exercise live |
+| Spotify (OAuth, playback/device control by voice or text, Now Playing remote) | Implemented, tested against a mocked Spotify API; needs a Spotify developer app and Premium to use live |
 | MCP / Zapier MCP | Implemented (config-driven); needs a live MCP server to exercise |
 | Model providers: OpenAI API or Codex CLI (your ChatGPT/Codex login via `codex app-server`) | Implemented; switchable in Settings; live-tested end to end with the real Codex CLI |
 | Sandboxed generated helper code | Architected only (see SECURITY.md §10); not enabled |

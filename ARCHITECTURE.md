@@ -61,6 +61,7 @@ External systems connect to the server:
 ```text
 Gmail API
 Instagram API
+Spotify Web API (Spotify Connect)
 Google Calendar API
 Google Drive API
 Zapier MCP
@@ -510,7 +511,20 @@ Avoid depending on headless Chromium if the API supports the required feature.
 
 ---
 
-## 4.4 Zapier MCP
+## 4.4 Spotify
+
+Direct Spotify Web API with server-side OAuth (Authorization Code flow; the client secret stays on the server).
+
+- remote control only: Spotify Connect devices play the audio
+- intent-level tools (play by name, pause, skip, seek, volume, shuffle, repeat, queue, devices, transfer); the server, not the model, searches and resolves Spotify IDs and devices
+- typed errors for missing setup, revoked auth, no active device, ambiguous or restricted devices, Premium, rate limits
+- no browser or desktop UI automation
+
+See `docs/INTEGRATIONS.md`.
+
+---
+
+## 4.5 Zapier MCP
 
 Use for integrations that are not worth implementing directly.
 

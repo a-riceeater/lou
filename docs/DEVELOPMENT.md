@@ -9,7 +9,7 @@
   iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1
   .\dotnet-install.ps1 -Channel 10.0 -InstallDir "$env:LOCALAPPDATA\Microsoft\dotnet"
   ```
-- Optional: an OpenAI API key with access to GPT-6 Luna, a Google Cloud OAuth client for Gmail, a Meta app for Instagram.
+- Optional: an OpenAI API key with access to GPT-6 Luna, a Google Cloud OAuth client for Gmail, a Meta app for Instagram, a Spotify developer app (and Premium) for Spotify.
 
 npm 11 blocks dependency install scripts by default; the repo's `package.json` allow-lists the two that need them (`better-sqlite3`, `esbuild`).
 
@@ -102,7 +102,7 @@ Or inside the real host with `LOU_UI_DEV_URL=http://localhost:5173` set before s
 
 | Command | Covers |
 | --- | --- |
-| `npm test` | Policy engine, registry, skills validator, runtime (selection, approvals, permissions, injection), server end to end with mocked Gmail/OAuth, WebSocket replay and signed commands, restart persistence, memory/skills/workflows/events/Instagram, UI palette states |
+| `npm test` | Policy engine, registry, skills validator, runtime (selection, approvals, permissions, injection), server end to end with mocked Gmail/OAuth, WebSocket replay and signed commands, restart persistence, memory/skills/workflows/events/Instagram, Spotify (mocked accounts + Web API: OAuth, refresh, playback, devices, errors), UI palette, Spotify setup and Now Playing |
 | `npm run typecheck` | Strict TypeScript across all packages and the UI |
 | `dotnet test --project apps/windows/tests/Lou.Agent.Tests/Lou.Agent.Tests.csproj` | Command signature/expiry/replay checks, local path policy, tools, DPAPI storage, protocol shape |
 | `npx tsx scripts/e2e-windows.ts` | Real `Lou.exe` paired to an in-process server, executing signed device commands |
