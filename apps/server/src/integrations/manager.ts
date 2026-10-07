@@ -4,7 +4,7 @@ import { LouError, newId } from "@lou/shared";
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { AuditLog } from "../core/audit";
 import type { Db } from "../db/client";
-import { accounts, oauthConnections, oauthStates } from "../db/schema";
+import { accounts, gmailScriptConnections, gmailScriptCommands, oauthConnections, oauthStates } from "../db/schema";
 import type { Logger } from "../logger";
 import { randomToken, sha256Hex, type Vault } from "../security/crypto";
 
@@ -227,7 +227,10 @@ export class IntegrationManager {
         provider: r.provider as AccountProvider,
         displayName: r.displayName,
         address: r.address,
-        status: r.status as AccountStatus,
+        status: (r.metadata.connectionMethod === "appscript" && r.status === "connected" && Date.now() - Date.parse(String(r.metadata.lastHeartbeat ?? r.createdAt)) > 5 * 60_000 ? "error" : r.status) as AccountStatus,
+        connectionMethod: r.provider === "google" ? (r.metadata.connectionMethod === "appscript" ? "appscript" : "oauth") : undefined,
+        lastSyncedAt: typeof r.metadata.lastSyncedAt === "string" ? r.metadata.lastSyncedAt : null,
+        syncState: r.metadata.connectionMethod === "appscript" ? (Date.now() - Date.parse(String(r.metadata.lastHeartbeat ?? r.createdAt)) > 5 * 60_000 ? "stale" : String(r.metadata.syncState ?? "waiting")) : undefined,
         capabilities: r.capabilities,
         lastCheckedAt: r.lastCheckedAt,
         lastError: r.lastError,
@@ -256,6 +259,8 @@ export class IntegrationManager {
     const row = this.getRow(accountId);
     if (!row || row.userId !== userId) throw new LouError("NOT_FOUND", "Account not found.");
     this.db.delete(oauthConnections).where(eq(oauthConnections.accountId, accountId)).run();
+    this.db.update(gmailScriptConnections).set({ revokedAt: new Date().toISOString() }).where(eq(gmailScriptConnections.accountId, accountId)).run();
+    this.db.update(gmailScriptCommands).set({ status: "failed", error: "Connection revoked" }).where(and(eq(gmailScriptCommands.accountId, accountId), sql`${gmailScriptCommands.status} in ('pending', 'claimed')`)).run();
     this.setStatus(accountId, "disconnected", null);
     this.audit.record({ userId, actorType: actor.type, actorId: actor.id, action: "account.disconnected", targetType: "account", targetId: accountId, details: { provider: row.provider } });
   }

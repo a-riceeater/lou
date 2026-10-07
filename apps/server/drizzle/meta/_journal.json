@@ -15,6 +15,13 @@
       "when": 1791097438417,
       "tag": "0001_codex_provider",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791406033435,
+      "tag": "0002_flippant_firelord",
+      "breakpoints": true
     }
   ]
 }

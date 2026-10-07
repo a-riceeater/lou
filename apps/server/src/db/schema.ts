@@ -415,3 +415,32 @@ export const settings = sqliteTable("settings", {
   value: json<unknown>("value").notNull(),
   updatedAt: updatedAt(),
 });
+
+/** Installation-scoped bearer hashes; Google credentials never enter Lou. */
+export const gmailScriptConnections = sqliteTable("gmail_script_connections", {
+  accountId: text("account_id").primaryKey().references(() => accounts.id, { onDelete: "cascade" }),
+  secretHash: text("secret_hash").notNull(),
+  protocolVersion: integer("protocol_version").notNull().default(1),
+  revokedAt: text("revoked_at"),
+  createdAt: createdAt(),
+});
+
+export const gmailScriptCommands = sqliteTable("gmail_script_commands", {
+  id: id(),
+  accountId: text("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  operation: text("operation").notNull(),
+  input: json<Record<string, unknown>>("input").notNull(),
+  status: text("status").notNull().default("pending"),
+  result: json<unknown>("result"),
+  error: text("error"),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: createdAt(),
+  completedAt: text("completed_at"),
+}, (t) => [index("gmail_script_commands_account_idx").on(t.accountId, t.status)]);
+
+export const gmailScriptMessages = sqliteTable("gmail_script_messages", {
+  accountId: text("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  messageId: text("message_id").notNull(),
+  data: json<Record<string, unknown>>("data").notNull(),
+  updatedAt: updatedAt(),
+}, (t) => [uniqueIndex("gmail_script_messages_id_idx").on(t.accountId, t.messageId)]);

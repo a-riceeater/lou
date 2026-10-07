@@ -152,6 +152,9 @@ export const AccountStatusSchema = z.enum(["connected", "needs_reauth", "error",
 export type AccountStatus = z.infer<typeof AccountStatusSchema>;
 
 export const AccountViewSchema = z.object({
+  connectionMethod: z.enum(["oauth", "appscript"]).optional(),
+  lastSyncedAt: IsoDate.nullable().optional(),
+  syncState: z.string().optional(),
   id: z.string(),
   provider: AccountProviderSchema,
   displayName: z.string(),
