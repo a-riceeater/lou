@@ -93,17 +93,22 @@ export class GmailAppsScript {
     this.db.update(commands).set({ status: "failed", error: "Command expired; execution outcome may be unknown. Check Gmail before sending again." }).where(and(eq(commands.accountId, accountId), inArray(commands.status, ["pending", "claimed"]), lt(commands.expiresAt, new Date().toISOString()))).run();
   }
 
-  enqueue(accountId: string, input: ScriptCommandInput) {
+  enqueue(accountId: string, input: ScriptCommandInput, idempotencyKey?: string) {
     const row = this.integrations.getRow(accountId);
     if (!row || row.status === "disconnected" || row.metadata.connectionMethod !== "appscript") throw new LouError("AUTH_REQUIRED", "Gmail script is disconnected.");
     const parsed = CommandInput.parse(input);
-    const id = newId("gsc");
+    const id = idempotencyKey ? `gsc_${sha256Hex(`${accountId}:${idempotencyKey}`).slice(0, 32)}` : newId("gsc");
+    const existing = this.db.select().from(commands).where(eq(commands.id, id)).get();
+    if (existing) {
+      if (JSON.stringify(existing.input) !== JSON.stringify(parsed)) throw new LouError("CONFLICT", "The approved command changed.");
+      return id;
+    }
     this.db.insert(commands).values({ id, accountId, operation: parsed.operation, input: parsed, expiresAt: new Date(Date.now() + 120_000).toISOString() }).run();
     return id;
   }
 
-  async execute<T>(accountId: string, input: ScriptCommandInput, signal?: AbortSignal): Promise<T> {
-    const id = this.enqueue(accountId, input);
+  async execute<T>(accountId: string, input: ScriptCommandInput, signal?: AbortSignal, idempotencyKey?: string): Promise<T> {
+    const id = this.enqueue(accountId, input, idempotencyKey);
     try {
       for (;;) {
         this.expire(accountId);

@@ -110,6 +110,9 @@ function louMessage(message) {
     attachmentMetadata: attachments.slice(0, 100).map((a, index) => ({ index: index, filename: a.getName(), mimeType: a.getContentType(), size: a.getSize() }))
   };
 }
+function louDraftFingerprint(draft) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, draft.getMessage().getRawContent()).map(b => ('0' + ((b + 256) % 256).toString(16)).slice(-2)).join('');
+}
 function louSent(message) { return { id: message.getId(), threadId: message.getThread().getId() }; }
 function louOptions(email) {
   const options = { cc: (email.cc || []).join(','), bcc: (email.bcc || []).join(',') };
@@ -151,7 +154,15 @@ function louExecute(input) {
       const draft = GmailApp.getDraft(input.draftId).update(email.to.join(','), email.subject, email.body, louOptions(email));
       return { id: draft.getId(), message: louSent(draft.getMessage()) };
     }
-    case 'SEND_DRAFT': return louSent(GmailApp.getDraft(input.draftId).send());
+    case 'DRAFT_MESSAGE': {
+      const draft = GmailApp.getDraft(input.draftId);
+      return { id: draft.getId(), message: louMessage(draft.getMessage()), fingerprint: louDraftFingerprint(draft) };
+    }
+    case 'SEND_DRAFT': {
+      const draft = GmailApp.getDraft(input.draftId);
+      if (!input.fingerprint || input.fingerprint !== louDraftFingerprint(draft)) throw new Error('Draft changed after approval. Review it again before sending.');
+      return louSent(draft.send());
+    }
     case 'FORWARD': {
       // Draft then send gives us the actual resulting sent message ID.
       const original = GmailApp.getMessageById(input.messageId);

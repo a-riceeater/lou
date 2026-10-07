@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { LouError } from "@lou/shared";
 import { fetchJson, type FetchLike } from "../http";
 
@@ -129,7 +130,13 @@ export class GmailClient {
     return { ok: true };
   }
 
-  async sendDraft(id: string, signal?: AbortSignal): Promise<{ id: string; threadId: string }> {
+  async getDraft(id: string, signal?: AbortSignal) {
+    const draft = await this.call<{ id: string; message: { id: string; raw: string } }>(`${API}/drafts/${encodeURIComponent(id)}?format=raw`, {}, signal);
+    return { id: draft.id, message: await this.readMessage(draft.message.id, signal), fingerprint: createHash("sha256").update(Buffer.from(draft.message.raw, "base64url")).digest("hex") };
+  }
+
+  async sendDraft(id: string, fingerprint: string | undefined, signal?: AbortSignal): Promise<{ id: string; threadId: string }> {
+    if (!fingerprint || (await this.getDraft(id, signal)).fingerprint !== fingerprint) throw new LouError("CONFLICT", "Draft changed after approval. Review it again before sending.");
     return this.call(`${API}/drafts/send`, { json: { id } }, signal);
   }
 

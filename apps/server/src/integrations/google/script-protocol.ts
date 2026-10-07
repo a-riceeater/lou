@@ -23,7 +23,8 @@ export const CommandInput = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("SEND"), email: outgoing }),
   z.object({ operation: z.literal("DRAFT"), email: outgoing }),
   z.object({ operation: z.literal("UPDATE_DRAFT"), draftId: identifier, email: outgoing }),
-  z.object({ operation: z.literal("SEND_DRAFT"), draftId: identifier }),
+  z.object({ operation: z.literal("DRAFT_MESSAGE"), draftId: identifier }),
+  z.object({ operation: z.literal("SEND_DRAFT"), draftId: identifier, fingerprint: z.string().length(64).optional() }),
   z.object({ operation: z.literal("FORWARD"), messageId: identifier, email: outgoing }),
   z.object({ operation: z.literal("MODIFY"), threadId: identifier, action: z.enum(["read", "unread", "archive", "inbox", "star", "unstar", "trash", "addLabel", "removeLabel"]), label: z.string().min(1).max(200).optional() }),
   z.object({ operation: z.literal("ATTACHMENT"), messageId: identifier, index: z.number().int().min(0).max(99) }),
@@ -38,6 +39,7 @@ export function resultSchema(operation: string) {
     case "THREAD": return z.object({ threadId: identifier, subject: text, messages: z.array(ScriptMessage).max(20) });
     case "SEND": case "SEND_DRAFT": case "FORWARD": return sent;
     case "DRAFT": case "UPDATE_DRAFT": return z.object({ id: identifier, message: sent });
+    case "DRAFT_MESSAGE": return z.object({ id: identifier, message: ScriptMessage, fingerprint: z.string().length(64) });
     case "ATTACHMENT": return z.object({ filename: z.string().max(500), mimeType: z.string().max(200), data: z.string().max(700_000) });
     case "PROFILE": return z.object({ emailAddress: z.string().email().or(z.literal("")), historyId: z.string() });
     default: return z.object({ ok: z.literal(true) });

@@ -168,7 +168,7 @@ export class ToolExecutor {
     }
 
     try {
-      const output = await withTimeout(handler.execute(input, ctx), this.deps.timeoutMs ?? 60_000, req.signal);
+      const output = await withTimeout(handler.execute(input, ctx), this.deps.timeoutMs ?? definition.timeoutMs ?? 60_000, req.signal);
       await this.deps.recorder?.finished(toolCallId, { status: "succeeded", output });
       return { kind: "result", toolCallId, definition, result: ok(output) };
     } catch (e) {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { FetchLike } from "../http";
 import type { IntegrationManager } from "../manager";
 import { GmailClient } from "./gmail";
+import { registerExtendedGmailTools } from "./extended-tools";
 import type { GmailAppsScript } from "./appscript";
 import { GmailAppsScriptProvider, GmailOAuthProvider, type GmailProvider } from "./provider";
 import { parseAddresses, replySubject } from "./mime";
@@ -64,11 +65,13 @@ export function gmailProviderFactory(integrations: IntegrationManager, fetchImpl
 /** Registers Gmail tools. All external content they return is marked untrusted. */
 export function registerGmailTools(registry: ToolRegistry, integrations: IntegrationManager, fetchImpl: FetchLike = fetch, script?: GmailAppsScript): void {
   const client = gmailProviderFactory(integrations, fetchImpl, script);
+  registerExtendedGmailTools(registry, integrations, client);
 
   registry.register(
     {
       id: "gmail.search",
       family: "gmail",
+      timeoutMs: 150_000,
       title: "Searching email",
       description:
         "Search a Gmail account using Gmail query syntax (e.g. `from:sarah newer_than:14d`, `subject:invoice is:unread`). Returns the newest matches with sender, subject, date and snippet.",
@@ -95,6 +98,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
     {
       id: "gmail.read_thread",
       family: "gmail",
+      timeoutMs: 150_000,
       title: "Reading email",
       description: "Read the messages of a Gmail thread (newest last). Quoted history is removed.",
       input: z.object({ accountId, threadId: z.string().min(1) }),
@@ -122,6 +126,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
     {
       id: "gmail.draft_reply",
       family: "gmail",
+      timeoutMs: 150_000,
       title: "Saving a draft",
       description: "Save a reply as a Gmail draft without sending it. Use only when the user asks for a draft rather than a reply.",
       input: z.object({ accountId, messageId: z.string().min(1), body: z.string().min(1).max(10_000) }),
@@ -144,6 +149,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
     {
       id: "gmail.reply",
       family: "gmail",
+      timeoutMs: 150_000,
       title: "Sending reply",
       description:
         "Reply to an email. Recipients, subject and threading are derived automatically from the original message. The user reviews and can edit the text before it is sent.",
@@ -176,7 +182,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
       async execute(raw, ctx) {
         // Only approved, prepared input reaches here (policy requires approval).
         const input = ReplyPrepared.parse(raw);
-        const sent = await client(input.accountId).sendEmail(input, input.threadId, ctx.signal);
+        const sent = await client(input.accountId).sendEmail(input, input.threadId, ctx.signal, ctx.approvalId);
         return { sent: true, messageId: sent.id, threadId: sent.threadId, to: input.to };
       },
     },
@@ -186,6 +192,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
     {
       id: "gmail.send",
       family: "gmail",
+      timeoutMs: 150_000,
       title: "Sending email",
       description: "Send a new email (not a reply). The user reviews and can edit the subject and text before it is sent.",
       input: SendInput,
@@ -223,7 +230,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
       },
       async execute(raw, ctx) {
         const input = SendPrepared.parse(raw);
-        const sent = await client(input.accountId).sendEmail(input, undefined, ctx.signal);
+        const sent = await client(input.accountId).sendEmail(input, undefined, ctx.signal, ctx.approvalId);
         return { sent: true, messageId: sent.id, threadId: sent.threadId };
       },
     },
