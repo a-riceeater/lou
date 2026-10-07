@@ -171,7 +171,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   const integrations = new IntegrationManager(db, vault, audit, logger);
   const notifications = new NotificationManager(db, bus);
   const events = new EventManager(db, notifications, memory, settings, audit, logger, model);
-  const gmailScript = new GmailAppsScript(db, integrations, events, config.publicUrl, () => !settings.get().monitoringDisabled);
+  const gmailScript = new GmailAppsScript(db, integrations, events, config.publicUrl, () => !settings.get().monitoringDisabled, audit);
   const google = new GoogleConnector(
     { clientId: config.google.clientId, clientSecret: config.google.clientSecret, publicUrl: config.publicUrl },
     integrations,

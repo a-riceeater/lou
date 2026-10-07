@@ -661,9 +661,11 @@ details.dev summary {
   overflow: auto;
   margin: 12px 0;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
   border-radius: 8px;
   font-size: 11px;
   line-height: 1.5;
   white-space: pre;
 }
+
+.gmail-script-dialog .setup-steps > li { min-width: 0; }

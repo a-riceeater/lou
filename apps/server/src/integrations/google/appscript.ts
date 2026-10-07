@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { LouError, newId } from "@lou/shared";
 import { and, eq, gt, lt, inArray } from "drizzle-orm";
+import type { AuditLog } from "../../core/audit";
 import type { Db } from "../../db/client";
 import { accounts, gmailScriptCommands as commands, gmailScriptConnections as connections, gmailScriptMessages as messages } from "../../db/schema";
 import type { EventManager } from "../../events/manager";
@@ -12,7 +13,7 @@ import { CommandInput, resultSchema, type ScriptCommandInput } from "./script-pr
 
 /** Scoped transport: bearer credentials authorize only these installation endpoints. */
 export class GmailAppsScript {
-  constructor(private readonly db: Db, private readonly integrations: IntegrationManager, private readonly events: EventManager, private readonly serverUrl: string, private readonly monitoringEnabled: () => boolean) {}
+  constructor(private readonly db: Db, private readonly integrations: IntegrationManager, private readonly events: EventManager, private readonly serverUrl: string, private readonly monitoringEnabled: () => boolean, private readonly audit: AuditLog) {}
 
   create(userId: string, resetId?: string) {
     if (new URL(this.serverUrl).protocol !== "https:") throw new LouError("NOT_CONFIGURED", "Apps Script requires an HTTPS Lou public URL reachable from Google. Set LOU_PUBLIC_URL first.");
@@ -26,6 +27,7 @@ export class GmailAppsScript {
       this.integrations.setStatus(id, "pending", null);
       this.integrations.updateMetadata(id, { lastHeartbeat: null, lastSyncedAt: null, syncState: "waiting" });
     });
+    this.audit.record({ userId, actorType: "user", actorId: userId, action: resetId ? "account.script_reset" : "account.connect_started", targetType: "account", targetId: id, details: { provider: "google", method: "appscript" } });
     return { accountId: id, script: generateGmailScript(this.serverUrl, id, secret) };
   }
 
@@ -65,6 +67,7 @@ export class GmailAppsScript {
       // EventManager has a durable unique externalId; retries after interrupted ingestion are safe.
       if (this.monitoringEnabled() && (message.labelIds as string[]).includes("INBOX") && !(message.labelIds as string[]).includes("SENT")) await this.events.ingest({ userId: account.userId, source: "gmail", accountId: id, type: "email.received", externalId: `gmail:${id}:${message.id}`, trust: "external-untrusted", occurredAt: Number.isFinite(Date.parse(String(message.date))) ? new Date(String(message.date)).toISOString() : new Date().toISOString(), payload: { messageId: message.id, threadId: message.threadId, from: message.from, subject: message.subject, snippet: message.snippet, labelIds: message.labelIds, bulk: message.bulk } });
     }
+    if (!account.metadata.lastSyncedAt) this.audit.record({ userId: account.userId, actorType: "system", action: "account.connected", targetType: "account", targetId: id, details: { provider: "google", method: "appscript" } });
     this.integrations.updateMetadata(id, { lastSyncedAt: new Date().toISOString(), syncCursor: cursor });
     return this.heartbeat(id, "connected");
   }

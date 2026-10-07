@@ -26,7 +26,7 @@ export const CommandInput = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("DRAFT_MESSAGE"), draftId: identifier }),
   z.object({ operation: z.literal("SEND_DRAFT"), draftId: identifier, fingerprint: z.string().length(64).optional() }),
   z.object({ operation: z.literal("FORWARD"), messageId: identifier, email: outgoing }),
-  z.object({ operation: z.literal("MODIFY"), threadId: identifier, action: z.enum(["read", "unread", "archive", "inbox", "star", "unstar", "trash", "addLabel", "removeLabel"]), label: z.string().min(1).max(200).optional() }),
+  z.object({ operation: z.literal("MODIFY"), threadId: identifier, action: z.enum(["read", "unread", "archive", "inbox", "star", "unstar", "trash", "addLabel", "removeLabel"]), label: z.string().min(1).max(200).optional() }).refine(input => !["addLabel", "removeLabel"].includes(input.action) || !!input.label, { message: "Label name is required", path: ["label"] }),
   z.object({ operation: z.literal("ATTACHMENT"), messageId: identifier, index: z.number().int().min(0).max(99) }),
   z.object({ operation: z.literal("PROFILE") }),
 ]);

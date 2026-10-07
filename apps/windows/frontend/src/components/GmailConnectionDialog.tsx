@@ -45,7 +45,7 @@ export function GmailConnectionDialog({ onClose, onOAuth, onChanged, resetId }: 
   };
   const connected = account?.status === "connected" && !!account.lastSyncedAt;
   return <div className="dialog-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}>
-    <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="gmail-connection-title">
+    <div className="dialog gmail-script-dialog" role="dialog" aria-modal="true" aria-labelledby="gmail-connection-title">
       <div className="dialog-head"><h2 id="gmail-connection-title">Connect Gmail</h2></div>
       {!installation ? <>
         {!resetId && <><p className="dialog-sub">Choose how to connect your Gmail account. Google sign-in is preferred when available.</p>

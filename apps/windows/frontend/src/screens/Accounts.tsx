@@ -11,8 +11,8 @@ const PROVIDER: Record<AccountView["provider"], string> = { google: "Gmail", ins
 
 function statusCopy(a: AccountView): { text: string; dot: string } {
   if (a.connectionMethod === "appscript") {
-    if (a.syncState === "stale") return { text: "Script not running / stale connection", dot: "warn" };
     if (a.status === "needs_reauth") return { text: "Authorization required", dot: "warn" };
+    if (a.syncState === "stale") return { text: "Script not running / stale connection", dot: "warn" };
     if (a.syncState === "syncing") return { text: "Syncing", dot: "on" };
   }
   switch (a.status) {
@@ -96,7 +96,7 @@ export function Accounts() {
                     <div className="row-title">{a.provider === "mcp" ? a.displayName : (a.address ?? a.displayName)}</div>
                     <div className="row-sub">
                       {PROVIDER[a.provider]} — {st.text}
-                      {a.connectionMethod === "appscript" ? ` · Connected via Apps Script · Last synced ${relativeTime(a.lastSyncedAt)}` : a.lastCheckedAt ? `, checked ${relativeTime(a.lastCheckedAt)}` : ""}
+                      {a.connectionMethod === "appscript" ? ` · ${a.status === "connected" ? "Connected via" : "via"} Apps Script · Last synced ${relativeTime(a.lastSyncedAt)}` : a.lastCheckedAt ? `, checked ${relativeTime(a.lastCheckedAt)}` : ""}
                     </div>
                   </div>
                 </div>

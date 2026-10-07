@@ -202,6 +202,52 @@ describe("generated Apps Script safety", () => {
     expect(runtime.sends).toBe(0);
   });
 
+  it("syncs read arrivals incrementally and resumes inside a large thread", async () => {
+    const { create } = await setup();
+    const a = await create();
+    const uploaded: any[] = [];
+    const runtime = scriptRuntime(a.script, (path, body) => {
+      if (path === "sync") uploaded.push(...body.messages);
+      return path === "commands" ? { commands: [] } : { ok: true };
+    });
+    const thread: any = { getId: () => "t1", getLabels: () => [], getMessages: () => mailbox };
+    const mailbox = Array.from({ length: 31 }, (_, i) => ({
+      getId: () => `m${i}`, getThread: () => thread, getDate: () => new Date(), getFrom: () => "Friend <friend@example.com>", getTo: () => "school@example.edu", getCc: () => "", getBcc: () => "", getReplyTo: () => "friend@example.com", getSubject: () => "Already read", getPlainBody: () => "Hi", getHeader: () => "", isInInbox: () => true, isUnread: () => false, isStarred: () => false, isInTrash: () => false, isDraft: () => false,
+      getAttachments: () => [{ getName: () => "file.txt", getContentType: () => "text/plain", getSize: () => 100, getBytes: () => { throw new Error("Content must not be uploaded"); } }],
+    }));
+    const gmail = runtime.context.GmailApp as any;
+    const queries: string[] = [];
+    gmail.search = (query: string, offset: number) => { queries.push(query); return offset === 0 ? [thread] : []; };
+    gmail.getMessageById = (id: string) => mailbox[Number(id.slice(1))];
+    runtime.run("setupLou()");
+    expect(new Set(uploaded.map(m => m.id)).size).toBe(25);
+    expect([...runtime.properties.values()].some(value => value.includes('"messageOffset":25'))).toBe(true);
+    runtime.run("louSync()");
+    expect(new Set(uploaded.map(m => m.id)).size).toBe(31);
+    expect(uploaded.every(m => !m.unread)).toBe(true);
+    expect(uploaded[0].attachmentMetadata).toEqual([{ index: 0, filename: "file.txt", mimeType: "text/plain", size: 100 }]);
+    expect(queries.every(q => q.includes("after:") && q.includes("before:") && !q.includes("is:unread"))).toBe(true);
+    const cursor = [...runtime.properties.entries()].find(([key]) => key.endsWith("_lastSync"))![1];
+    runtime.run("louSync()");
+    expect(new Set(uploaded.map(m => m.id)).size).toBe(31);
+    expect(queries.at(-1)).toContain(`after:${Math.floor((Number(cursor) - 300000) / 1000)}`);
+  });
+
+  it("stops setup on denied Gmail access and retains unrelated triggers", async () => {
+    const { create } = await setup();
+    const a = await create();
+    const errors: string[] = [];
+    const runtime = scriptRuntime(a.script, (path, body) => { if (body.error) errors.push(body.error); return { ok: true }; });
+    runtime.run("ScriptApp.newTrigger('unrelated').timeBased().everyMinutes(1).create()");
+    (runtime.context.GmailApp as any).getInboxUnreadCount = () => { throw new Error(`Authorization denied ${a.secret}`); };
+    expect(() => runtime.run("setupLou()")).toThrow("Authorization denied [redacted]");
+    expect(runtime.triggers.map(t => t.getHandlerFunction())).toEqual(["unrelated"]);
+    expect(errors.join()).not.toContain(a.secret);
+    expect(runtime.sends).toBe(0);
+    runtime.run("removeLou()");
+    expect(runtime.triggers.map(t => t.getHandlerFunction())).toEqual(["unrelated"]);
+  });
+
   it("never sends twice after a lost result response, replay, or an interrupted execution", async () => {
     const { create } = await setup();
     const a = await create();
