@@ -4,14 +4,14 @@ Preferred order (ARCHITECTURE.md §4.1): direct official API → official MCP �
 
 ## Gmail (direct API)
 
-**Setup:** Google Cloud project → enable Gmail API → OAuth consent screen (add scopes `openid email profile gmail.readonly gmail.compose`) → OAuth client of type **Web application** with redirect URI `${LOU_PUBLIC_URL}/oauth/google/callback`. While the consent screen is in "Testing", add your Google accounts as test users.
+**Setup:** Google Cloud project → enable Gmail API → OAuth consent screen (add scopes `openid email profile gmail.readonly gmail.compose gmail.modify`) → OAuth client of type **Web application** with redirect URI `${LOU_PUBLIC_URL}/oauth/google/callback`. While the consent screen is in "Testing", add your Google accounts as test users.
 
 Give Lou the OAuth client in one of these ways:
 
-- **Windows app (easiest):** Accounts → **Add Gmail**. Until Gmail is set up, this opens a dialog that walks through the steps above, links to each Google Cloud page, and shows the exact redirect URI with a copy option. You paste the Client ID and secret, or the client JSON file Google offers as a download. The server checks them with Google's token endpoint and stores the secret encrypted (AES-256-GCM with `LOU_MASTER_KEY`). The secret is never shown again or returned to any client. **Gmail setup** reopens the dialog to replace the client. Gmail accounts connected with a different client are marked **Needs you to sign in again**.
+- **Windows app (easiest):** Accounts → **Add Gmail → Sign in with Google**. Until Gmail is set up, this opens a dialog that walks through the steps above, links to each Google Cloud page, and shows the exact redirect URI with a copy option. You paste the Client ID and secret, or the client JSON file Google offers as a download. The server checks them with Google's token endpoint and stores the secret encrypted (AES-256-GCM with `LOU_MASTER_KEY`). The secret is never shown again or returned to any client. **Gmail setup** reopens the dialog to replace the client. Gmail accounts connected with a different client are marked **Needs you to sign in again**.
 - **Environment:** set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. The installer offers this prompt. Values from the environment take precedence over a client saved from the app.
 
-**Connect:** Accounts → Add Gmail (opens your browser; PKCE + single-use state). Connect as many accounts as you like. Each gets its own account ID, status, and encrypted tokens. Access tokens refresh automatically. A revoked or expired refresh token marks the account **Needs you to sign in again** and the agent reports it in plain language.
+**Connect:** Accounts → Add Gmail → Sign in with Google (opens your browser; PKCE + single-use state). Connect as many accounts as you like. Each gets its own account ID, status, and encrypted tokens. Access tokens refresh automatically. A revoked or expired refresh token marks the account **Needs you to sign in again** and the agent reports it in plain language.
 
 | Tool | Risk | Notes |
 | --- | --- | --- |
@@ -24,6 +24,14 @@ Give Lou the OAuth client in one of these ways:
 When several accounts are connected, tools take `accountId` (the context lists account IDs and addresses).
 
 **Monitoring:** a poller reads `users.history` every `LOU_GMAIL_POLL_SECONDS` (default 120) and feeds new inbox messages into the event pipeline. This needs no public endpoint. Promotions, social, and forum categories are ignored deterministically. Bulk and no-reply mail is logged. Your notification rules apply next, then Luna classifies the rest. Pub/Sub push (`users.watch`) can replace polling later without changing the pipeline.
+
+## Gmail via Google Apps Script (Workspace fallback)
+
+Normal Google OAuth is preferred. If your Workspace administrator allows user-created Apps Scripts and Gmail access but blocks Lou's OAuth application, choose **Settings → Integrations → Manage integrations → Add Gmail → Connect using Google Apps Script**. Lou generates one private, ready-to-paste `Code.gs` file; paste it into a blank project at [script.google.com](https://script.google.com), run `setupLou`, and authorize it. Lou detects the connection automatically. No public Web App deployment, Google Cloud project, or manually entered integration credentials are needed.
+
+The script makes outbound HTTPS requests to Lou about once a minute, uploads incremental messages and attachment metadata, and executes Lou's queued Gmail commands. Google OAuth tokens stay inside Google; the installation secret authorizes only its specific Gmail account. Apps Script accounts use the same Gmail tools and approval flow as OAuth accounts. Disconnect/reset revokes the old secret immediately. Workspace restrictions and Gmail/Apps Script quotas still apply.
+
+See [setup, security, limitations, and the manual acceptance test](GMAIL_APPS_SCRIPT.md).
 
 ## Instagram (official API, professional accounts)
 

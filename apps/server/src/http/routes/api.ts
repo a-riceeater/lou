@@ -130,7 +130,7 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
     const row = s.integrations.getRow(id);
     if (!row || row.userId !== d.userId) throw new LouError("NOT_FOUND", "Account not found.");
     if (row.provider === "google") {
-      if (row.metadata.connectionMethod === "appscript") await s.gmailScript.execute(id, { operation: "PROFILE" }).catch(() => undefined);
+      if (row.metadata.connectionMethod === "appscript") await s.gmailScript.execute(id, { operation: "PROFILE" }).catch((err: Error) => s.integrations.setStatus(id, "error", err.message));
       else await s.google.checkHealth(id).catch(() => undefined);
     }
     if (row.provider === "spotify") await s.spotify.checkHealth(id).catch(() => undefined);

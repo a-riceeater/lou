@@ -19,6 +19,12 @@ export const REDACT_PATHS = [
   "*.client_secret",
   "*.password",
   "*.apiKey",
+  "script",
+  "integrationSecret",
+  "*.script",
+  "*.integrationSecret",
+  "*.secret",
+  "*.secretHash",
 ];
 
 /** Strips query strings (OAuth codes, states) from logged URLs. */

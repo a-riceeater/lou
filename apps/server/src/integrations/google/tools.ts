@@ -19,6 +19,8 @@ const ReplyInput = z.object({
   accountId,
   messageId: z.string().min(1).describe("ID of the message being replied to (from gmail.search or gmail.read_thread)."),
   body: z.string().min(1).max(10_000).describe("Complete reply text, written as the user."),
+  htmlBody: z.string().max(100_000).optional(),
+  attachments: z.array(z.object({ filename: z.string().max(500), mimeType: z.string().max(200), data: z.string().max(500_000) })).max(5).optional(),
   replyAll: z.boolean().optional().describe("Also reply to the other recipients. Default false."),
 });
 
@@ -26,6 +28,8 @@ const ReplyPrepared = z.object({
   accountId: z.string(),
   messageId: z.string(),
   body: z.string().min(1).max(10_000),
+  htmlBody: z.string().max(100_000).optional(),
+  attachments: z.array(z.object({ filename: z.string().max(500), mimeType: z.string().max(200), data: z.string().max(500_000) })).max(5).optional(),
   replyAll: z.boolean().optional(),
   from: z.string(),
   to: z.array(email).min(1).max(50),
@@ -175,6 +179,8 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
               { key: "to", label: "To", value: [...prepared.to, ...prepared.cc].join(", "), kind: "recipients" },
               { key: "subject", label: "Subject", value: prepared.subject, kind: "text" },
               { key: "body", label: "Message", value: prepared.body, kind: "longtext" },
+              ...(prepared.htmlBody ? [{ key: "htmlBody", label: "HTML message", value: prepared.htmlBody, kind: "longtext" as const }] : []),
+              ...(prepared.attachments?.length ? [{ key: "attachments", label: "Attachments", value: prepared.attachments.map(a => a.filename).join(", "), kind: "text" as const }] : []),
             ],
           },
         };
@@ -224,6 +230,8 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
               { key: "to", label: "To", value: [...prepared.to, ...prepared.cc, ...(prepared.bcc ?? [])].join(", "), kind: "recipients" },
               { key: "subject", label: "Subject", value: prepared.subject, kind: "text" },
               { key: "body", label: "Message", value: prepared.body, kind: "longtext" },
+              ...(prepared.htmlBody ? [{ key: "htmlBody", label: "HTML message", value: prepared.htmlBody, kind: "longtext" as const }] : []),
+              ...(prepared.attachments?.length ? [{ key: "attachments", label: "Attachments", value: prepared.attachments.map(a => a.filename).join(", "), kind: "text" as const }] : []),
             ],
           },
         };
@@ -280,6 +288,8 @@ async function prepareReply(
     accountId: account.id,
     messageId: input.messageId,
     body: input.body,
+    ...(input.htmlBody ? { htmlBody: input.htmlBody } : {}),
+    ...(input.attachments ? { attachments: input.attachments } : {}),
     replyAll: input.replyAll ?? false,
     from: account.address ?? "",
     to,

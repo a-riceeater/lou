@@ -42,6 +42,7 @@ describe("Gmail setup in Accounts", () => {
 
     expect(await screen.findByText(/one-time Google Cloud setup/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add Gmail" }));
+    await user.click(screen.getByRole("button", { name: "Sign in with Google" }));
     const dialog = await screen.findByRole("dialog", { name: "Set up Gmail" });
     expect(dialog).toHaveTextContent(REDIRECT);
     expect(dialog).toHaveTextContent("Web application");
@@ -67,6 +68,7 @@ describe("Gmail setup in Accounts", () => {
     const user = userEvent.setup();
     render(<Accounts />);
     await user.click(await screen.findByRole("button", { name: "Add Gmail" }));
+    await user.click(screen.getByRole("button", { name: "Sign in with Google" }));
     await screen.findByRole("dialog");
     await user.click(screen.getByLabelText("Client ID"));
     await user.paste(JSON.stringify({ web: { client_id: CLIENT_ID, client_secret: "test-secret-fromjsonfrom", redirect_uris: [REDIRECT] } }));
@@ -84,6 +86,7 @@ describe("Gmail setup in Accounts", () => {
     const user = userEvent.setup();
     render(<Accounts />);
     await user.click(await screen.findByRole("button", { name: "Add Gmail" }));
+    await user.click(screen.getByRole("button", { name: "Sign in with Google" }));
     await user.type(await screen.findByLabelText("Client ID"), CLIENT_ID);
     await user.type(screen.getByLabelText("Client secret"), "test-secret-wrongwrongwr");
     await user.click(screen.getByRole("button", { name: "Save and add Gmail" }));
@@ -91,7 +94,7 @@ describe("Gmail setup in Accounts", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("goes straight to Google sign-in once Gmail is set up", async () => {
+  it("opens the existing Google sign-in from the method picker once Gmail is set up", async () => {
     const bridge = new TestBridge()
       .route("GET /api/accounts", () => ({ items: [], available: { google: true, instagram: true } }))
       .route("GET /api/google", () => setup({ configSource: "env", clientId: CLIENT_ID }))
@@ -100,7 +103,54 @@ describe("Gmail setup in Accounts", () => {
     const user = userEvent.setup();
     render(<Accounts />);
     await user.click(await screen.findByRole("button", { name: "Add Gmail" }));
+    await user.click(screen.getByRole("button", { name: "Sign in with Google" }));
     await waitFor(() => expect(bridge.calls.find((c) => c.method === "app.openExternal")?.params).toEqual({ url: "https://accounts.google.com/o/oauth2/v2/auth?state=t" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("Gmail Apps Script setup", () => {
+  it("creates and copies one generated script, then automatically reports connection", async () => {
+    let connected = false;
+    const script = '// private integration credential\nfunction setupLou() {}';
+    const bridge = new TestBridge()
+      .route("GET /api/accounts", () => ({ items: connected ? [{ id: "acc_script", provider: "google", connectionMethod: "appscript", address: "student@example.edu", displayName: "School", status: "connected", capabilities: [], lastCheckedAt: new Date().toISOString(), lastSyncedAt: new Date().toISOString(), lastError: null, syncState: "connected" }] : [], available: { google: false, instagram: true } }))
+      .route("GET /api/google", () => setup())
+      .route("POST /api/accounts/google/appscript", () => ({ accountId: "acc_script", script }));
+    setBridge(bridge);
+    const user = userEvent.setup();
+    render(<Accounts />);
+    await user.click(await screen.findByRole("button", { name: "Add Gmail" }));
+    expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Connect using Google Apps Script" }));
+    const copy = await screen.findByRole("button", { name: "Copy Script" });
+    expect(screen.getByLabelText("Generated Apps Script")).toHaveTextContent("setupLou");
+    await user.click(copy);
+    expect(bridge.calls.find(c => c.method === "clipboard.write")?.params).toEqual({ text: script });
+    await user.click(screen.getByRole("button", { name: "Open Google Apps Script" }));
+    expect(bridge.calls.find(c => c.method === "app.openExternal")?.params).toEqual({ url: "https://script.google.com" });
+    expect(bridge.apiCalls("/api/accounts/google/appscript")).toHaveLength(1);
+    connected = true;
+    expect(await screen.findByRole("button", { name: "Done" }, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Generated Apps Script")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Connected via Apps Script/).length).toBeGreaterThan(0);
+    expect(bridge.apiCalls("/api/accounts/google/connect")).toHaveLength(0);
+  });
+
+  it("shows stale state and regenerates the selected connection without using OAuth", async () => {
+    const bridge = new TestBridge()
+      .route("GET /api/accounts", () => ({ items: [{ id: "acc_stale", provider: "google", connectionMethod: "appscript", address: "student@example.edu", displayName: "School", status: "error", capabilities: [], lastCheckedAt: null, lastSyncedAt: null, lastError: null, syncState: "stale" }], available: { google: true, instagram: true } }))
+      .route("GET /api/google", () => setup({ configSource: "env", clientId: CLIENT_ID }))
+      .route("POST /api/accounts/acc_stale/appscript/reset", () => ({ accountId: "acc_stale", script: "// regenerated secret" }));
+    setBridge(bridge);
+    const user = userEvent.setup();
+    render(<Accounts />);
+    expect(await screen.findByText(/Script not running \/ stale connection/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Regenerate script" }));
+    expect(screen.getByText(/immediately revokes the old script/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Regenerate script / reset connection" }));
+    await screen.findByRole("button", { name: "Copy Script" });
+    expect(bridge.apiCalls("/api/accounts/acc_stale/appscript/reset")).toHaveLength(1);
+    expect(bridge.apiCalls("/api/accounts/google/connect")).toHaveLength(0);
   });
 });
