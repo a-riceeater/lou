@@ -8,8 +8,8 @@ import { CommandInput, type ScriptCommandInput } from "./script-protocol";
 /** Additional ordinary Gmail tools share policy, approvals, and provider selection. */
 export function registerExtendedGmailTools(registry: ToolRegistry, integrations: IntegrationManager, client: (id: string) => GmailProvider) {
   const specs = [
-    ["fetch_message", "MESSAGE", "Read one email, including attachment metadata", false],
-    ["fetch_attachment", "ATTACHMENT", "Fetch an attachment by message ID and attachment index (maximum 500 KB)", false],
+    ["read_message", "MESSAGE", "Read one email, including attachment metadata", false],
+    ["read_attachment", "ATTACHMENT", "Fetch an attachment by message ID and attachment index (maximum 500 KB)", false],
     ["modify", "MODIFY", "Mark a thread read/unread, archive, move to inbox/trash, star/unstar, or add/remove a label", true],
     ["create_draft", "DRAFT", "Create an email draft, optionally with HTML, BCC, and attachments", true],
     ["update_draft", "UPDATE_DRAFT", "Update an existing email draft", true],
@@ -26,7 +26,7 @@ export function registerExtendedGmailTools(registry: ToolRegistry, integrations:
         const account = integrations.resolveAccount(ctx.userId, "google", input.accountId);
         let summary = "";
         const command = CommandInput.parse(input.command);
-        let draftMessage: { to: string; cc: string; subject: string; body: string } | undefined;
+        let draftMessage: { to: string; cc: string; bcc?: string; subject: string; body: string; attachments?: string[] } | undefined;
         if (command.operation === "SEND_DRAFT") {
           const draft = await client(account.id).command({ operation: "DRAFT_MESSAGE", draftId: command.draftId }, ctx.signal) as { message: typeof draftMessage; fingerprint: string };
           command.fingerprint = draft.fingerprint;
@@ -39,11 +39,13 @@ export function registerExtendedGmailTools(registry: ToolRegistry, integrations:
             { key: "to", label: "To / CC / BCC", kind: "recipients", value: [...email.to, ...(email.cc ?? []), ...(email.bcc ?? [])].join(", ") },
             { key: "subject", label: "Subject", kind: "text", value: email.subject },
             { key: "body", label: "Message", kind: "longtext", value: email.body },
+            { key: "htmlBody", label: "HTML message", kind: "longtext", value: email.htmlBody ?? "" },
             { key: "attachments", label: "Attachments", kind: "text", value: (email.attachments ?? []).map(a => a.filename).join(", ") },
           ] : draftMessage ? [
-            { key: "to", label: "To / CC", kind: "recipients", value: [draftMessage.to, draftMessage.cc].filter(Boolean).join(", ") },
+            { key: "to", label: "To / CC / BCC", kind: "recipients", value: [draftMessage.to, draftMessage.cc, draftMessage.bcc ?? ""].filter(Boolean).join(", ") },
             { key: "subject", label: "Subject", kind: "text", value: draftMessage.subject },
             { key: "body", label: "Message", kind: "longtext", value: draftMessage.body },
+            { key: "attachments", label: "Attachments", kind: "text", value: (draftMessage.attachments ?? []).join(", ") },
           ] : [{ key: "command", label: "Action", kind: "longtext", value: JSON.stringify(command) }],
         } };
       },

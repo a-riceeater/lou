@@ -100,7 +100,7 @@ function louMessage(message) {
   const body = message.getPlainBody().slice(0, 6000);
   const attachments = message.getAttachments({ includeInlineImages: false, includeAttachments: true });
   return {
-    id: message.getId(), threadId: thread.getId(), from: message.getFrom(), to: message.getTo(), cc: message.getCc(),
+    id: message.getId(), threadId: thread.getId(), from: message.getFrom(), to: message.getTo(), cc: message.getCc(), bcc: message.getBcc(),
     replyTo: message.getReplyTo(), subject: message.getSubject(), date: message.getDate().toISOString(),
     messageIdHeader: message.getHeader('Message-ID'), references: message.getHeader('References'),
     snippet: body.slice(0, 300), labelIds: labels, unread: message.isUnread(),
@@ -137,7 +137,7 @@ function louExecute(input) {
     case 'SEARCH': {
       // Pagination is by Gmail threads; flatten matching threads into bounded message results.
       const threads = GmailApp.search(input.query, input.offset || 0, input.limit);
-      return threads.reduce((out, thread) => out.concat(thread.getMessages().slice(-input.limit).map(louMessage)), []).slice(0, input.limit);
+      return threads.reduce((out, thread) => out.concat(thread.getMessages().slice(-input.limit).map(louMessage)), []).sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).slice(0, input.limit);
     }
     case 'MESSAGE': return louMessage(GmailApp.getMessageById(input.messageId));
     case 'THREAD': {
@@ -245,32 +245,40 @@ function louSync() {
     // Fixed window and persisted thread pagination recover after missed runs.
     // The query includes read mail, with a five-minute overlap; no unread-only filter.
     while (Date.now() < deadline) {
-      const threads = GmailApp.search('after:' + window.after + ' before:' + window.before + ' -in:chats', window.offset, 10);
-      for (const thread of threads) {
-        let batch = [];
-        for (const message of thread.getMessages()) {
-          if (message.getDate().getTime() < window.after * 1000 || message.getDate().getTime() >= window.before * 1000) continue;
-          const signature = [message.isUnread(), message.isStarred(), message.isInInbox(), message.isInTrash(), thread.getLabels().map(l => l.getName()).join(',')].join('|');
-          if (known[message.getId()] === signature) continue;
-          batch.push(louMessage(message));
-          if (batch.length === 10) {
-            louRequest('sync', { messages: batch, cursor: JSON.stringify(window) });
-            batch = [];
-          }
-          known[message.getId()] = signature;
-        }
-        if (batch.length) louRequest('sync', { messages: batch, cursor: JSON.stringify(window) });
-      }
-      window.offset += threads.length;
-      props.setProperty(louKey('window'), JSON.stringify(window));
-      // Bound local state well below Apps Script's per-property 9 KB limit.
-      known = Object.fromEntries(Object.entries(known).slice(-100));
-      props.setProperty(louKey('known'), JSON.stringify(known));
-      if (threads.length < 10) {
+      const threads = GmailApp.search('after:' + window.after + ' before:' + window.before + ' -in:chats', window.offset, 1);
+      if (!threads.length) {
         props.setProperty(louKey('lastSync'), String((window.before - 1) * 1000));
         props.deleteProperty(louKey('window'));
         break;
       }
+      const thread = threads[0];
+      const threadMessages = thread.getMessages();
+      let batch = [];
+      let processed = 0;
+      // Resume within large threads as well as across search pages. Save only after
+      // acknowledged batches; interruption safely repeats the previous batch.
+      let index = window.messageOffset || 0;
+      for (; index < threadMessages.length && Date.now() < deadline && processed < 25; index++, processed++) {
+        const message = threadMessages[index];
+        if (message.getDate().getTime() < window.after * 1000 || message.getDate().getTime() >= window.before * 1000) continue;
+        const labels = thread.getLabels().map(l => l.getName());
+        const signature = [message.isUnread(), message.isStarred(), message.isInInbox(), message.isInTrash()].join('|') + '|' + labels.join(',').slice(0, 30);
+        if (known[message.getId()] === signature) continue;
+        batch.push(louMessage(message));
+        if (batch.length === 10) {
+          louRequest('sync', { messages: batch, cursor: JSON.stringify(window) });
+          batch = [];
+        }
+        known[message.getId()] = signature;
+      }
+      if (batch.length) louRequest('sync', { messages: batch, cursor: JSON.stringify(window) });
+      if (index >= threadMessages.length) { window.offset++; window.messageOffset = 0; }
+      else window.messageOffset = index;
+      props.setProperty(louKey('window'), JSON.stringify(window));
+      known = Object.fromEntries(Object.entries(known).slice(-100));
+      while (Utilities.newBlob(JSON.stringify(known)).getBytes().length > 8000) delete known[Object.keys(known)[0]];
+      props.setProperty(louKey('known'), JSON.stringify(known));
+      if (index < threadMessages.length) break;
     }
     // Recent arrival scan cannot see old read/archive changes. Rotate through the
     // bounded recent message cache to refresh those states without scanning all mail.

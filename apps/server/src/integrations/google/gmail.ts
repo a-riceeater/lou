@@ -34,6 +34,7 @@ export interface MessageMeta {
   from: string;
   to: string;
   cc: string;
+  bcc?: string;
   replyTo: string;
   subject: string;
   date: string;
@@ -190,6 +191,7 @@ function toMeta(m: GmailMessageResource): MessageMeta {
     from: header(h, "From"),
     to: header(h, "To"),
     cc: header(h, "Cc"),
+    bcc: header(h, "Bcc"),
     replyTo: header(h, "Reply-To"),
     subject: header(h, "Subject"),
     date: header(h, "Date") || (m.internalDate ? new Date(Number(m.internalDate)).toUTCString() : ""),

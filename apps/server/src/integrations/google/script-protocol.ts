@@ -3,7 +3,7 @@ import { z } from "zod";
 const identifier = z.string().min(1).max(200);
 const text = z.string().max(20_000);
 export const ScriptMessage = z.object({
-  id: identifier, threadId: identifier, from: text, to: text, cc: text, replyTo: text,
+  id: identifier, threadId: identifier, from: text, to: text, cc: text, bcc: text.default(""), replyTo: text,
   subject: text, date: z.string().max(100), messageIdHeader: text, references: text,
   snippet: z.string().max(1000), labelIds: z.array(z.string().max(200)).max(100),
   unread: z.boolean(), bulk: z.boolean(), body: z.string().max(6000),
