@@ -54,6 +54,8 @@ export const api = {
   checkAccount: (id: string) => call<AccountView>("POST", `/api/accounts/${id}/check`),
   disconnectAccount: (id: string) => call<{ ok: true }>("DELETE", `/api/accounts/${id}`),
 
+  createGmailScript: (resetId?: string) => call<{ accountId: string; script: string }>("POST", resetId ? `/api/accounts/${resetId}/appscript/reset` : "/api/accounts/google/appscript"),
+
   googleSetup: () => call<GoogleSetupStatus>("GET", "/api/google"),
   saveGoogleApp: (clientId: string, clientSecret: string) => call<GoogleSetupStatus>("POST", "/api/google/app", { clientId, clientSecret }),
 

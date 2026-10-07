@@ -31,6 +31,10 @@ export function Settings() {
       <h2 className="section-title" style={{ marginTop: 0 }}>Assistant model</h2>
       <ProviderPicker />
 
+      <h2 className="section-title">Integrations</h2>
+      <p className="hint">Connect Gmail, music, and other services.</p>
+      <a className="btn" href="#/app/accounts">Manage integrations</a>
+
       <h2 className="section-title">Safety</h2>
 
       {settings.error ? (
