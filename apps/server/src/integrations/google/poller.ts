@@ -40,6 +40,7 @@ export class GmailPoller {
     this.running = true;
     try {
       for (const account of this.integrations.allConnected("google")) {
+        if (account.metadata.connectionMethod === "appscript") continue;
         try {
           await this.pollAccount(account.id, account.userId, account.metadata.historyId as string | undefined);
         } catch (err) {

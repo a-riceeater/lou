@@ -36,6 +36,7 @@ import { agentRuns, approvals } from "./db/schema";
 import { DeviceGateway } from "./devices/gateway";
 import { DeviceRegistry } from "./devices/registry";
 import { EventManager } from "./events/manager";
+import { GmailAppsScript } from "./integrations/google/appscript";
 import { GoogleConnector } from "./integrations/google/connector";
 import { GmailPoller } from "./integrations/google/poller";
 import { gmailClientFactory, registerGmailTools } from "./integrations/google/tools";
@@ -92,6 +93,7 @@ export interface Services {
   workflows: WorkflowEngine;
   integrations: IntegrationManager;
   google: GoogleConnector;
+  gmailScript: GmailAppsScript;
   instagram: InstagramConnector;
   spotify: SpotifyConnector;
   spotifyPlayer: SpotifyPlayer;
@@ -169,6 +171,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   const integrations = new IntegrationManager(db, vault, audit, logger);
   const notifications = new NotificationManager(db, bus);
   const events = new EventManager(db, notifications, memory, settings, audit, logger, model);
+  const gmailScript = new GmailAppsScript(db, integrations, events, config.publicUrl, () => !settings.get().monitoringDisabled);
   const google = new GoogleConnector(
     { clientId: config.google.clientId, clientSecret: config.google.clientSecret, publicUrl: config.publicUrl },
     integrations,
@@ -218,7 +221,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   });
   executorRef = executor;
 
-  registerGmailTools(registry, integrations, fetchImpl);
+  registerGmailTools(registry, integrations, fetchImpl, gmailScript);
   instagram.registerTools(registry);
   registerSpotifyTools(registry, spotifyPlayer);
   registerInternalTools(registry, { memory, skills, approvals: approvals_, workflows, gateway });
@@ -302,6 +305,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     workflows,
     integrations,
     google,
+    gmailScript,
     instagram,
     spotify,
     spotifyPlayer,

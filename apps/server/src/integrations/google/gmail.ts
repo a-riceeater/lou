@@ -94,6 +94,49 @@ export class GmailClient {
     return this.call(`${API}/drafts`, { json: { message: { raw, ...(threadId ? { threadId } : {}) } } }, signal);
   }
 
+  async readMessage(id: string, signal?: AbortSignal) {
+    const resource = await this.call<GmailMessageResource>(`${API}/messages/${encodeURIComponent(id)}?format=full`, {}, signal);
+    const parts: GmailPart[] = [];
+    const walk = (part?: GmailPart) => { if (!part) return; if (part.filename) parts.push(part); for (const child of part.parts ?? []) walk(child); };
+    walk(resource.payload);
+    return { ...toMeta(resource), body: extractBody(resource.payload).slice(0, MAX_BODY_CHARS), attachments: collectAttachments(resource.payload), attachmentMetadata: parts.map((part, index) => ({ index, filename: part.filename!, mimeType: part.mimeType ?? "application/octet-stream", size: part.body?.size ?? 0, attachmentId: part.body?.attachmentId })) };
+  }
+
+  async attachment(messageId: string, index: number, signal?: AbortSignal) {
+    const message = await this.readMessage(messageId, signal);
+    const attachment = message.attachmentMetadata[index];
+    if (!attachment?.attachmentId) throw new LouError("NOT_FOUND", "Attachment not found.");
+    if (attachment.size > 500_000) throw new LouError("VALIDATION_FAILED", "Attachment exceeds Lou’s 500 KB transfer limit. Open it in Gmail.");
+    const content = await this.call<{ data: string }>(`${API}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment.attachmentId)}`, {}, signal);
+    return { filename: attachment.filename, mimeType: attachment.mimeType, data: Buffer.from(content.data, "base64url").toString("base64") };
+  }
+
+  async modifyThread(threadId: string, action: string, label: string | undefined, signal?: AbortSignal) {
+    const changes: Record<string, { addLabelIds?: string[]; removeLabelIds?: string[] }> = {
+      read: { removeLabelIds: ["UNREAD"] }, unread: { addLabelIds: ["UNREAD"] }, archive: { removeLabelIds: ["INBOX"] },
+      inbox: { addLabelIds: ["INBOX"] }, star: { addLabelIds: ["STARRED"] }, unstar: { removeLabelIds: ["STARRED"] }, trash: { addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
+    };
+    let change = changes[action];
+    if (action === "addLabel" || action === "removeLabel") {
+      if (!label) throw new LouError("VALIDATION_FAILED", "Label name is required.");
+      const labels = await this.call<{ labels: Array<{ id: string; name: string }> }>(`${API}/labels`, {}, signal);
+      let found = labels.labels.find(l => l.name === label);
+      if (!found && action === "addLabel") found = await this.call(`${API}/labels`, { json: { name: label } }, signal);
+      change = action === "addLabel" ? { addLabelIds: found ? [found.id] : [] } : { removeLabelIds: found ? [found.id] : [] };
+    }
+    if (!change) throw new LouError("VALIDATION_FAILED", "Unknown Gmail action.");
+    await this.call(`${API}/threads/${encodeURIComponent(threadId)}/modify`, { json: change }, signal);
+    return { ok: true };
+  }
+
+  async sendDraft(id: string, signal?: AbortSignal): Promise<{ id: string; threadId: string }> {
+    return this.call(`${API}/drafts/send`, { json: { id } }, signal);
+  }
+
+  async updateDraft(id: string, raw: string, signal?: AbortSignal): Promise<{ id: string; message: { id: string; threadId: string } }> {
+    return this.call(`${API}/drafts/${encodeURIComponent(id)}`, { method: "PUT", json: { message: { raw } } }, signal);
+  }
+
   /** New INBOX message IDs since a history ID. Throws NOT_FOUND if the history ID is too old. */
   async newMessagesSince(startHistoryId: string, signal?: AbortSignal): Promise<{ messageIds: string[]; historyId: string }> {
     const ids = new Set<string>();
@@ -114,11 +157,11 @@ export class GmailClient {
     return { messageIds: [...ids], historyId };
   }
 
-  private async call<T>(url: string, options: { json?: unknown }, signal?: AbortSignal): Promise<T> {
+  private async call<T>(url: string, options: { json?: unknown; method?: "PUT" }, signal?: AbortSignal): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       const token = await this.token(attempt > 0);
       try {
-        return await fetchJson<T>(this.fetchImpl, url, { service: "Gmail", headers: { authorization: `Bearer ${token}` }, json: options.json, signal });
+        return await fetchJson<T>(this.fetchImpl, url, { service: "Gmail", ...(options.method ? { method: options.method } : {}), headers: { authorization: `Bearer ${token}` }, json: options.json, signal });
       } catch (err) {
         // One forced refresh on 401; anything else propagates.
         if (attempt === 0 && err instanceof LouError && err.code === "AUTH_REQUIRED") continue;

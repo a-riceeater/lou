@@ -94,6 +94,9 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
     return s.google.startConnect(d.userId);
   });
 
+  app.post("/api/accounts/google/appscript", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async request => s.gmailScript.create(requireDevice(request).userId));
+  app.post("/api/accounts/:id/appscript/reset", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async request => s.gmailScript.create(requireDevice(request).userId, IdParam.parse(request.params).id));
+
   // ---- Gmail setup (the Google OAuth client, entered from the setup dialog) -------
   app.get("/api/google", async (request) => (requireDevice(request), s.google.status()));
 
@@ -126,7 +129,10 @@ export async function apiRoutes(app: FastifyInstance, s: Services): Promise<void
     const { id } = IdParam.parse(request.params);
     const row = s.integrations.getRow(id);
     if (!row || row.userId !== d.userId) throw new LouError("NOT_FOUND", "Account not found.");
-    if (row.provider === "google") await s.google.checkHealth(id).catch(() => undefined);
+    if (row.provider === "google") {
+      if (row.metadata.connectionMethod === "appscript") await s.gmailScript.execute(id, { operation: "PROFILE" }).catch(() => undefined);
+      else await s.google.checkHealth(id).catch(() => undefined);
+    }
     if (row.provider === "spotify") await s.spotify.checkHealth(id).catch(() => undefined);
     if (row.provider === "instagram") {
       await s.instagram

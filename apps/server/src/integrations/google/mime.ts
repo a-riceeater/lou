@@ -6,6 +6,11 @@ export interface OutgoingEmail {
   from?: string;
   to: string[];
   cc?: string[];
+  bcc?: string[];
+  htmlBody?: string;
+  attachments?: Array<{ filename: string; mimeType: string; data: string }>;
+  messageId?: string;
+  replyAll?: boolean;
   subject: string;
   body: string;
   inReplyTo?: string;
@@ -27,9 +32,28 @@ export function buildMime(email: OutgoingEmail): string {
   if (email.from) headers.push(`From: ${addressList([email.from])}`);
   headers.push(`To: ${addressList(email.to)}`);
   if (email.cc?.length) headers.push(`Cc: ${addressList(email.cc)}`);
+  if (email.bcc?.length) headers.push(`Bcc: ${addressList(email.bcc)}`);
   headers.push(`Subject: ${encodeHeaderValue(email.subject)}`);
   if (email.inReplyTo) headers.push(`In-Reply-To: ${encodeHeaderValue(email.inReplyTo)}`);
   if (email.references) headers.push(`References: ${encodeHeaderValue(email.references)}`);
+  if (email.htmlBody || email.attachments?.length) {
+    const boundary = `lou_${crypto.randomUUID()}`;
+    headers.push("MIME-Version: 1.0", `Content-Type: multipart/mixed; boundary="${boundary}"`);
+    const part = (mime: string, data: string, extra = "") => `--${boundary}\r\nContent-Type: ${mime}\r\nContent-Transfer-Encoding: base64\r\n${extra}\r\n${data}\r\n`;
+    let parts: string;
+    if (email.htmlBody) {
+      const alternative = `lou_${crypto.randomUUID()}`;
+      parts = `--${boundary}\r\nContent-Type: multipart/alternative; boundary="${alternative}"\r\n\r\n`;
+      for (const [mime, body] of [["text/plain", email.body], ["text/html", email.htmlBody]]) parts += `--${alternative}\r\nContent-Type: ${mime}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${Buffer.from(body!).toString("base64")}\r\n`;
+      parts += `--${alternative}--\r\n`;
+    } else parts = part('text/plain; charset="UTF-8"', Buffer.from(email.body).toString("base64"));
+    for (const a of email.attachments ?? []) {
+      const filename = encodeURIComponent(a.filename);
+      const mime = /^[\w.+-]+\/[\w.+-]+$/.test(a.mimeType) ? a.mimeType : "application/octet-stream";
+      parts += part(mime, Buffer.from(a.data, "base64").toString("base64"), `Content-Disposition: attachment; filename*=UTF-8''${filename}\r\n`);
+    }
+    return `${headers.join("\r\n")}\r\n\r\n${parts}--${boundary}--\r\n`;
+  }
   headers.push("MIME-Version: 1.0", 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64");
   const body = Buffer.from(email.body.replace(/\r?\n/g, "\r\n"), "utf8")
     .toString("base64")

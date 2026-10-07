@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { LouError, newId } from "@lou/shared";
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, lt, inArray } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { accounts, gmailScriptCommands as commands, gmailScriptConnections as connections, gmailScriptMessages as messages } from "../../db/schema";
 import type { EventManager } from "../../events/manager";
@@ -53,7 +53,8 @@ export class GmailAppsScript {
 
   heartbeat(id: string, state: "syncing" | "connected" | "error" | "authorization_required", error?: string) {
     this.integrations.updateMetadata(id, { lastHeartbeat: new Date().toISOString(), syncState: state });
-    this.integrations.setStatus(id, state === "authorization_required" ? "needs_reauth" : state === "error" ? "error" : "connected", error ?? null);
+    const row = this.integrations.getRow(id)!;
+    this.integrations.setStatus(id, state === "authorization_required" ? "needs_reauth" : state === "error" ? "error" : row.status === "pending" && state === "syncing" ? "pending" : "connected", error ?? null);
     return { ok: true };
   }
 
@@ -89,7 +90,7 @@ export class GmailAppsScript {
   }
 
   expire(accountId: string) {
-    this.db.update(commands).set({ status: "failed", error: "Command expired; execution outcome may be unknown. Check Gmail before sending again." }).where(and(eq(commands.accountId, accountId), inArray(commands.status, ["pending", "claimed"]), gt(new Date().toISOString(), commands.expiresAt))).run();
+    this.db.update(commands).set({ status: "failed", error: "Command expired; execution outcome may be unknown. Check Gmail before sending again." }).where(and(eq(commands.accountId, accountId), inArray(commands.status, ["pending", "claimed"]), lt(commands.expiresAt, new Date().toISOString()))).run();
   }
 
   enqueue(accountId: string, input: ScriptCommandInput) {

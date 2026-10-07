@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { FetchLike } from "../http";
 import type { IntegrationManager } from "../manager";
 import { GmailClient } from "./gmail";
-import { buildMime, parseAddresses, replySubject, toGmailRaw } from "./mime";
+import type { GmailAppsScript } from "./appscript";
+import { GmailAppsScriptProvider, GmailOAuthProvider, type GmailProvider } from "./provider";
+import { parseAddresses, replySubject } from "./mime";
 
 const accountId = z.string().optional().describe("Account id from the connected accounts list. Omit if only one Gmail account is connected.");
 const email = z.string().email().max(320);
@@ -38,6 +40,9 @@ const SendInput = z.object({
   accountId,
   to: z.array(email).min(1).max(20),
   cc: z.array(email).max(20).optional(),
+  bcc: z.array(email).max(20).optional(),
+  htmlBody: z.string().max(100_000).optional(),
+  attachments: z.array(z.object({ filename: z.string().max(500), mimeType: z.string().max(200), data: z.string().max(500_000) })).max(5).optional(),
   subject: z.string().min(1).max(998),
   body: z.string().min(1).max(20_000),
 });
@@ -50,9 +55,15 @@ function firstName(address: string | undefined): string {
   return parsed.name?.split(/\s+/)[0] ?? parsed.email.split("@")[0] ?? parsed.email;
 }
 
+export function gmailProviderFactory(integrations: IntegrationManager, fetchImpl: FetchLike = fetch, script?: GmailAppsScript): (id: string) => GmailProvider {
+  return id => integrations.getRow(id)?.metadata.connectionMethod === "appscript" && script
+    ? new GmailAppsScriptProvider(script, id)
+    : new GmailOAuthProvider(force => force ? integrations.forceRefresh(id) : integrations.accessToken(id), fetchImpl);
+}
+
 /** Registers Gmail tools. All external content they return is marked untrusted. */
-export function registerGmailTools(registry: ToolRegistry, integrations: IntegrationManager, fetchImpl: FetchLike = fetch): void {
-  const client = gmailClientFactory(integrations, fetchImpl);
+export function registerGmailTools(registry: ToolRegistry, integrations: IntegrationManager, fetchImpl: FetchLike = fetch, script?: GmailAppsScript): void {
+  const client = gmailProviderFactory(integrations, fetchImpl, script);
 
   registry.register(
     {
@@ -123,7 +134,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
     {
       async execute(input, ctx) {
         const prepared = await prepareReply(integrations, client, ctx.userId, { ...input, replyAll: false }, ctx.signal);
-        const draft = await client(prepared.accountId).createDraft(toGmailRaw(buildMime(prepared)), prepared.threadId, ctx.signal);
+        const draft = await client(prepared.accountId).draftEmail(prepared, prepared.threadId, ctx.signal);
         return { draftId: draft.id, threadId: prepared.threadId, to: prepared.to };
       },
     },
@@ -165,7 +176,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
       async execute(raw, ctx) {
         // Only approved, prepared input reaches here (policy requires approval).
         const input = ReplyPrepared.parse(raw);
-        const sent = await client(input.accountId).send(toGmailRaw(buildMime(input)), input.threadId, ctx.signal);
+        const sent = await client(input.accountId).sendEmail(input, input.threadId, ctx.signal);
         return { sent: true, messageId: sent.id, threadId: sent.threadId, to: input.to };
       },
     },
@@ -203,7 +214,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
             title: `Email ${firstName(prepared.to[0])}`,
             account: prepared.from,
             fields: [
-              { key: "to", label: "To", value: [...prepared.to, ...prepared.cc].join(", "), kind: "recipients" },
+              { key: "to", label: "To", value: [...prepared.to, ...prepared.cc, ...(prepared.bcc ?? [])].join(", "), kind: "recipients" },
               { key: "subject", label: "Subject", value: prepared.subject, kind: "text" },
               { key: "body", label: "Message", value: prepared.body, kind: "longtext" },
             ],
@@ -212,7 +223,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
       },
       async execute(raw, ctx) {
         const input = SendPrepared.parse(raw);
-        const sent = await client(input.accountId).send(toGmailRaw(buildMime(input)), undefined, ctx.signal);
+        const sent = await client(input.accountId).sendEmail(input, undefined, ctx.signal);
         return { sent: true, messageId: sent.id, threadId: sent.threadId };
       },
     },
@@ -222,7 +233,7 @@ export function registerGmailTools(registry: ToolRegistry, integrations: Integra
 /** Like prepareReply, plus a friendly first name for the approval title. */
 async function prepareReplyWithName(
   integrations: IntegrationManager,
-  client: (id: string) => GmailClient,
+  client: (id: string) => GmailProvider,
   userId: string,
   input: z.infer<typeof ReplyInput>,
   signal: AbortSignal,
@@ -236,7 +247,7 @@ async function prepareReplyWithName(
 /** Derives recipients, subject and threading headers deterministically from the original message. */
 async function prepareReply(
   integrations: IntegrationManager,
-  client: (id: string) => GmailClient,
+  client: (id: string) => GmailProvider,
   userId: string,
   input: z.infer<typeof ReplyInput>,
   signal: AbortSignal,

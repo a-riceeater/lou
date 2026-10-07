@@ -5,6 +5,7 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import type { Services } from "../container";
 import { errorHandler } from "./errors";
+import { gmailAppsScriptRoutes } from "./routes/gmail-appscript";
 import { apiRoutes } from "./routes/api";
 import { publicRoutes } from "./routes/public";
 import { wsRoutes } from "./routes/ws";
@@ -32,5 +33,6 @@ export async function buildApp(s: Services): Promise<FastifyInstance> {
   await app.register(async (scope) => publicRoutes(scope, s));
   await app.register(async (scope) => wsRoutes(scope, s));
   await app.register(async (scope) => apiRoutes(scope, s));
+  await app.register(async (scope) => gmailAppsScriptRoutes(scope, s));
   return app;
 }

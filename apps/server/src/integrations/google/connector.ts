@@ -94,7 +94,7 @@ export class GoogleConnector {
   }
 
   private accounts(userId: string) {
-    return this.integrations.rows(userId, "google").filter((r) => r.status !== "disconnected");
+    return this.integrations.rows(userId, "google").filter((r) => r.status !== "disconnected" && r.metadata.connectionMethod !== "appscript");
   }
 
   // ---- OAuth -------------------------------------------------------------------------
