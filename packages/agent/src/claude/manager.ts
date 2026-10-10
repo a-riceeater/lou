@@ -125,9 +125,9 @@ export class ClaudeCliManager {
     return { ...this.status, auth: this.status.auth ? { ...this.status.auth } : null };
   }
 
-  /** Checks installation, version and sign-in now and reports health. Never throws. */
-  async health(): Promise<ClaudeHealth> {
-    this.checkedAt = 0;
+  /** Checks installation, version and sign-in (now, or reusing a recent check) and reports health. Never throws. */
+  async health(force = true): Promise<ClaudeHealth> {
+    if (force) this.checkedAt = 0;
     try {
       await this.ensureReady();
     } catch {

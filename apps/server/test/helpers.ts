@@ -13,6 +13,13 @@ import type { FakeSpotify } from "./spotify-fake";
 
 export const MOCK_CODEX = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packages", "agent", "test", "fixtures", "mock-codex-app-server.mjs");
 
+export const MOCK_CLAUDE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packages", "agent", "test", "fixtures", "mock-claude.mjs");
+
+/** Reads the mock Claude CLI's launch and request log for a test server. */
+export function claudeLog(server: TestServer): { launches: string[][]; turns: Array<{ prompt: string; sessionId: string; resumed: boolean; model: string | null }>; toolResults: any[] } {
+  return JSON.parse(readFileSync(join(server.dataDir, "claude-state.json"), "utf8"));
+}
+
 /** Reads the mock Codex App Server's request log for a test server. */
 export function codexLog(server: TestServer): { launches: string[][]; requests: Array<{ method: string; params?: any }>; toolResults: any[] } {
   return JSON.parse(readFileSync(join(server.dataDir, "codex-state.json"), "utf8"));
@@ -145,6 +152,8 @@ export async function startTestServer(
     env?: Record<string, string>;
     /** Script for the mock Codex App Server (enables the codex_cli provider backend). */
     codexScript?: Record<string, unknown>;
+    /** Script for the mock Claude CLI (enables the claude_cli provider backend). */
+    claudeScript?: Record<string, unknown>;
     /** Pass null to leave the OpenAI API provider unconfigured. */
     apiModel?: null;
     /** Put a Google OAuth client in the environment (default) or leave Gmail setup to the API. */
@@ -178,6 +187,12 @@ export async function startTestServer(
     writeFileSync(scriptPath, JSON.stringify(options.codexScript));
     codex = { explicitPath: MOCK_CODEX, env: { ...process.env, MOCK_CODEX_SCRIPT: scriptPath, MOCK_CODEX_STATE: join(dataDir, "codex-state.json") } };
   }
+  let claude: { explicitPath: string; env: NodeJS.ProcessEnv } | undefined;
+  if (options.claudeScript) {
+    const scriptPath = join(dataDir, "claude-script.json");
+    writeFileSync(scriptPath, JSON.stringify(options.claudeScript));
+    claude = { explicitPath: MOCK_CLAUDE, env: { ...process.env, MOCK_CLAUDE_SCRIPT: scriptPath, MOCK_CLAUDE_STATE: join(dataDir, "claude-state.json") } };
+  }
   const services = createServices(config, createLogger("silent" as "fatal", false), {
     fetch: ((input: string | URL | Request, init?: RequestInit) => {
       const host = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).host;
@@ -188,6 +203,7 @@ export async function startTestServer(
     embeddings: null,
     transcriber: null,
     codex: codex ?? { explicitPath: join(dataDir, "no-codex", "codex.exe") },
+    claude: claude ?? { explicitPath: join(dataDir, "no-claude", "claude.exe") },
   });
   await services.start();
   const app = await buildApp(services);
