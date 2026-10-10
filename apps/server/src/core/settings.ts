@@ -13,6 +13,7 @@ const DEFAULTS: SettingsView = {
   agentPaused: false,
   autoActivateLowRiskSkills: false,
   aiProvider: "openai_api",
+  claudeModel: null,
 };
 
 export const NotificationRuleSchema = z.object({

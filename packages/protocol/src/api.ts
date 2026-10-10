@@ -46,14 +46,14 @@ export type PairingCodeResponse = z.infer<typeof PairingCodeResponseSchema>;
 // Runs & history
 // ---------------------------------------------------------------------------
 
-export const AiProviderSchema = z.enum(["openai_api", "codex_cli"]);
+export const AiProviderSchema = z.enum(["openai_api", "codex_cli", "claude_cli"]);
 export type AiProvider = z.infer<typeof AiProviderSchema>;
 
 export const CreateRunRequestSchema = z.object({
   text: z.string().trim().min(1).max(4000),
   conversationId: z.string().optional(),
   inputMode: z.enum(["text", "voice"]).default("text"),
-  /** One-off provider override (e.g. retrying with the API after a Codex failure). Audited. */
+  /** One-off provider override (e.g. retrying with the API after a Codex or Claude failure). Audited. */
   provider: AiProviderSchema.optional(),
 });
 export type CreateRunRequest = z.input<typeof CreateRunRequestSchema>;
@@ -410,6 +410,9 @@ export const AuditEntrySchema = z.object({
 });
 export type AuditEntry = z.infer<typeof AuditEntrySchema>;
 
+/** Passed to `claude --model`, so it must look like a model name, never like a flag. */
+export const ClaudeModelSchema = z.string().trim().regex(/^[A-Za-z0-9][\w.:\[\]-]{0,63}$/, "Not a valid Claude model name.");
+
 /** Emergency controls from SECURITY.md §12. Available without involving the agent. */
 export const SettingsViewSchema = z.object({
   writeToolsDisabled: z.boolean(),
@@ -419,6 +422,8 @@ export const SettingsViewSchema = z.object({
   autoActivateLowRiskSkills: z.boolean(),
   /** Model backend for the assistant. */
   aiProvider: AiProviderSchema,
+  /** Model for the Claude CLI provider (an alias such as "sonnet" or a full model name); null uses Claude Code's own default. */
+  claudeModel: ClaudeModelSchema.nullable(),
 });
 export type SettingsView = z.infer<typeof SettingsViewSchema>;
 export const UpdateSettingsRequestSchema = SettingsViewSchema.partial();
@@ -448,7 +453,7 @@ export const ProviderStatusSchema = z.object({
   state: z.string(),
   /** Short user-facing status, e.g. "Connected", "Not signed in". */
   summary: z.string(),
-  /** Actionable hint, e.g. "Run: codex login". */
+  /** Actionable hint, e.g. "Run: codex login" or "Run: claude auth login". */
   hint: z.string().nullable(),
   details: z.record(z.string(), z.string()),
 });

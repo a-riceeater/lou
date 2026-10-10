@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ClaudeModelSchema } from "@lou/protocol";
 import { z } from "zod";
 
 const bool = z
@@ -59,8 +60,8 @@ const EnvSchema = z.object({
   LOU_MCP_CONFIG: z.string().optional(),
   LOU_IMPROVEMENT_ENABLED: bool.default(true),
 
-  /** Which model backend drives the assistant: the OpenAI API (API key) or the local Codex CLI (ChatGPT/Codex login). */
-  AI_PROVIDER: z.enum(["openai_api", "codex_cli"]).default("openai_api"),
+  /** Which model backend drives the assistant: the OpenAI API (API key), the local Codex CLI (ChatGPT/Codex login) or Claude Code (Claude login). */
+  AI_PROVIDER: z.enum(["openai_api", "codex_cli", "claude_cli"]).default("openai_api"),
   /** Path to the codex executable (default: found on PATH). */
   CODEX_PATH: z.string().optional(),
   /** Model for Codex threads (default: the model configured in Codex). */
@@ -68,6 +69,13 @@ const EnvSchema = z.object({
   /** Empty working directory given to Codex threads. */
   LOU_CODEX_WORKSPACE: z.string().optional(),
   LOU_CODEX_TURN_TIMEOUT_SECONDS: z.coerce.number().int().min(10).default(300),
+  /** Path to the claude executable (default: found on PATH, ~/.local/bin or ~/.claude/local). */
+  CLAUDE_PATH: z.string().optional(),
+  /** Default model for Claude Code (alias such as "sonnet" or a full name); can be changed in Settings. */
+  LOU_CLAUDE_MODEL: ClaudeModelSchema.optional(),
+  /** Empty working directory given to Claude Code sessions. */
+  LOU_CLAUDE_WORKSPACE: z.string().optional(),
+  LOU_CLAUDE_TURN_TIMEOUT_SECONDS: z.coerce.number().int().min(10).default(300),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -100,8 +108,9 @@ export interface Config {
   spotify: { clientId?: string; clientSecret?: string; redirectUri: string };
   mcpConfigPath?: string;
   improvementEnabled: boolean;
-  aiProvider: "openai_api" | "codex_cli";
+  aiProvider: "openai_api" | "codex_cli" | "claude_cli";
   codex: { path?: string; model?: string; workspaceDir: string; turnTimeoutMs: number };
+  claude: { path?: string; model?: string; workspaceDir: string; turnTimeoutMs: number };
   version: string;
 }
 
@@ -164,6 +173,12 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
       model: e.LOU_CODEX_MODEL,
       workspaceDir: resolve(e.LOU_CODEX_WORKSPACE ?? `${dataDir}/codex-workspace`),
       turnTimeoutMs: e.LOU_CODEX_TURN_TIMEOUT_SECONDS * 1000,
+    },
+    claude: {
+      path: e.CLAUDE_PATH,
+      model: e.LOU_CLAUDE_MODEL,
+      workspaceDir: resolve(e.LOU_CLAUDE_WORKSPACE ?? `${dataDir}/claude-workspace`),
+      turnTimeoutMs: e.LOU_CLAUDE_TURN_TIMEOUT_SECONDS * 1000,
     },
     version: "0.1.0",
   };
