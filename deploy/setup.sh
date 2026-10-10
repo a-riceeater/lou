@@ -169,7 +169,7 @@ build_in_sandbox() {
 configure() {
     run_step 5 'Configuring Lou'
     discard_typeahead
-    local choice=2 old_key='' key='' url='' name='' timezone='' provider='' api_key='' codex_path='' codex_real='' model=''
+    local choice=2 old_key='' key='' url='' name='' timezone='' provider='' api_key='' codex_path='' codex_real='' claude_path='' claude_help='' model=''
     MCP_DEST=
     : > "$TEMP/env"
     if [[ -f $CONFIG/lou.env ]]; then
@@ -245,8 +245,8 @@ PY
         fi
         write_value LOU_MASTER_KEY "$key"
         unset key old_key
-        info 'Choose a model provider: 1. OpenAI API   2. Codex CLI'
-        prompt_choice provider 'Provider choice' 1 1 2
+        info 'Choose a model provider: 1. OpenAI API   2. Codex CLI   3. Claude Code'
+        prompt_choice provider 'Provider choice' 1 1 2 3
         case $provider in
             1)
                 write_value AI_PROVIDER openai_api
@@ -259,6 +259,7 @@ PY
                 write_value LOU_TRANSCRIBE_MODEL gpt-4o-transcribe
                 ;;
             2) write_value AI_PROVIDER codex_cli ;;
+            3) write_value AI_PROVIDER claude_cli ;;
             *) die 'Invalid provider choice.' ;;
         esac
         write_value LOU_GMAIL_POLL_SECONDS 120
@@ -367,6 +368,35 @@ PY
         if ! grep -q '^CODEX_PATH=' "$TEMP/env"; then write_value CODEX_PATH "$codex_path"; fi
         if ! grep -q '^CODEX_HOME=' "$TEMP/env"; then write_value CODEX_HOME "$DATA/.codex"; fi
         success 'Codex executable and lou-user authentication verified.'
+    fi
+    if [[ $(python3 "$SUPPORT" get "$TEMP/env" AI_PROVIDER) == claude_cli ]]; then
+        OPERATION='checking Claude Code as the lou user'
+        claude_path=$(python3 "$SUPPORT" get "$TEMP/env" CLAUDE_PATH)
+        if [[ -z $claude_path ]]; then
+            claude_path=$(PATH=/usr/bin:/usr/local/bin:/bin command -v claude || true)
+        fi
+        if [[ -z $claude_path ]]; then
+            confirm 'Install the documented @anthropic-ai/claude-code package system-wide with npm?' || die 'Install Claude Code system-wide and rerun setup.'
+            PATH=/usr/bin:/bin npm install -g @anthropic-ai/claude-code
+            claude_path=$(PATH=/usr/bin:/usr/local/bin:/bin command -v claude)
+        fi
+        [[ $claude_path == /* && -x $claude_path ]] || die 'CLAUDE_PATH must be an executable absolute path.'
+        case $claude_path in /home/*|/root/*|/var/lib/lou/*) die 'Claude Code must be installed system-wide outside home/data directories.' ;; esac
+        check_path "$(readlink -f -- "$claude_path")"
+        as_lou "$claude_path" --version
+        # Lou locks Claude Code down to its own tools with these flags; older CLIs lack them.
+        claude_help=$( (cd / && as_lou "$claude_path" --help) 2>/dev/null || true)
+        [[ $claude_help == *--strict-mcp-config* && $claude_help == *--tools* && $claude_help == *--setting-sources* ]] \
+            || die 'Upgrade Claude Code (sudo npm install -g @anthropic-ai/claude-code@latest): Lou needs --tools, --strict-mcp-config and --setting-sources.'
+        if [[ $( (cd / && as_lou "$claude_path" auth status --json) 2>/dev/null) != *'"loggedIn": true'* ]]; then
+            info 'Claude Code needs authentication as lou (it keeps its login in /var/lib/lou/.claude).'
+            info "Manual command: sudo -u lou -H $claude_path auth login"
+            confirm 'Run Claude Code sign-in as lou now?' || die 'Complete that login and rerun setup.'
+            (cd / && as_lou "$claude_path" auth login) || die 'Claude Code authentication failed; rerun after signing in as lou.'
+            [[ $( (cd / && as_lou "$claude_path" auth status --json) 2>/dev/null) == *'"loggedIn": true'* ]] || die 'Claude Code is still not signed in as lou.'
+        fi
+        if ! grep -q '^CLAUDE_PATH=' "$TEMP/env"; then write_value CLAUDE_PATH "$claude_path"; fi
+        success 'Claude Code executable and lou-user authentication verified.'
     fi
     python3 "$SUPPORT" validate "$TEMP/env" "$STAGE"
     success 'Configuration validated; secret values are hidden.'
@@ -572,7 +602,7 @@ preflight() {
     done
     # The data directory is service-owned, but its ancestry must be trusted.
     [[ ! -L $DATA && ( ! -e $DATA || -d $DATA ) ]] || die 'Unexpected /var/lib/lou symlink or file.'
-    for path in "$DATA/lou.db" "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace"; do
+    for path in "$DATA/lou.db" "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace" "$DATA/.claude" "$DATA/claude-workspace"; do
         [[ ! -L $path ]] || die "Unexpected symlink in runtime path: $path"
     done
     check_file "$CONFIG/lou.env"
@@ -673,7 +703,7 @@ main() {
             die 'Existing database must be readable/writable by lou; review its ownership manually.'
         fi
     fi
-    for path in "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace"; do
+    for path in "$DATA/skills" "$DATA/.codex" "$DATA/codex-workspace" "$DATA/.claude" "$DATA/claude-workspace"; do
         if [[ -e $path ]]; then
             [[ -d $path ]] || die "Existing runtime path is not a directory: $path"
             if ! as_lou test -r "$path" || ! as_lou test -w "$path" || ! as_lou test -x "$path"; then

@@ -387,6 +387,8 @@ def validate_env(path, app):
         raise ValueError('Codex credentials must use /var/lib/lou/.codex')
     if env.get('LOU_CODEX_WORKSPACE', '/var/lib/lou/codex-workspace') != '/var/lib/lou/codex-workspace':
         raise ValueError('Codex workspace must use /var/lib/lou/codex-workspace')
+    if env.get('LOU_CLAUDE_WORKSPACE', '/var/lib/lou/claude-workspace') != '/var/lib/lou/claude-workspace':
+        raise ValueError('Claude Code workspace must use /var/lib/lou/claude-workspace')
     if env.get('LOU_MCP_CONFIG'):
         if env['LOU_MCP_CONFIG'] != '/etc/lou/mcp.json':
             raise ValueError('MCP configuration must use /etc/lou/mcp.json')
@@ -400,7 +402,7 @@ def validate_env(path, app):
     # the configuration validator. The service still gets administrator settings.
     clean = {'PATH': '/usr/bin:/usr/local/bin:/bin', 'HOME': '/var/lib/lou'}
     clean.update({k: v for k, v in env.items() if k.startswith(('LOU_', 'OPENAI_', 'GOOGLE_', 'INSTAGRAM_', 'SPOTIFY_'))
-                  or k in ('AI_PROVIDER', 'CODEX_HOME', 'CODEX_PATH')})
+                  or k in ('AI_PROVIDER', 'CODEX_HOME', 'CODEX_PATH', 'CLAUDE_PATH')})
     check = subprocess.run(['/usr/bin/node', '--import', 'tsx', '--input-type=module',
                             '-e', code], cwd=app, env=clean, capture_output=True,
                            user='lou', group='lou', extra_groups=['lou'])
