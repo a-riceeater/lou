@@ -223,7 +223,16 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       });
     }
     const toolset = new Set(record.toolset);
-    return { tools, call: (name, args) => this.onToolCall(state, record, toolset, signal, names.get(name) ?? name, args) };
+    // Claude may call tools in parallel; run them one at a time so only one action can wait for approval.
+    let queue: Promise<unknown> = Promise.resolve();
+    return {
+      tools,
+      call: (name, args) => {
+        const next = queue.then(() => this.onToolCall(state, record, toolset, signal, names.get(name) ?? name, args));
+        queue = next.catch(() => undefined);
+        return next;
+      },
+    };
   }
 
   private async onToolCall(state: RunState, record: ProviderThreadRecord, toolset: Set<string>, signal: AbortSignal, toolId: string, args: Record<string, unknown>): Promise<McpToolResult> {

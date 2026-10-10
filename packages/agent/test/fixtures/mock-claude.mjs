@@ -120,6 +120,14 @@ async function main() {
       s.toolResults.push({ tool: step.tool, isError: res.result?.isError ?? null, text: res.result?.content?.[0]?.text ?? null, error: res.error ?? null });
       save(s);
       out({ type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content: res.result?.content ?? [] }] } });
+    } else if (step.parallel) {
+      // Several tool uses in one assistant message, called concurrently like the real CLI.
+      const uses = step.parallel.map((p) => ({ type: "tool_use", id: `toolu_${Math.random().toString(36).slice(2, 10)}`, name: `mcp__lou__${p.tool}`, input: p.args ?? {} }));
+      out({ type: "assistant", parent_tool_use_id: null, message: { role: "assistant", content: uses } });
+      const results = await Promise.all(step.parallel.map((p) => mcp.rpc("tools/call", { name: p.tool, arguments: p.args ?? {} })));
+      const s = load();
+      results.forEach((res, i) => s.toolResults.push({ tool: step.parallel[i].tool, isError: res.result?.isError ?? null, text: res.result?.content?.[0]?.text ?? null, error: res.error ?? null }));
+      save(s);
     } else if (step.nativeTool) {
       out({ type: "assistant", parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_native", name: step.nativeTool, input: { command: "rm -rf /" } }] } });
       await sleep(5000);

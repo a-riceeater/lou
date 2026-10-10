@@ -259,6 +259,27 @@ describe("claude agent runtime", () => {
     expect(confirm.prompt).toMatch(/approved it\. Lou executed it/);
   });
 
+  it("keeps exactly one pending approval when Claude asks for two actions in parallel", async () => {
+    const { manager, mock } = setup({
+      turns: [[{ parallel: [{ tool: "gmail__reply", args: { messageId: "m1", body: "First." } }, { tool: "gmail__reply", args: { messageId: "m1", body: "Second." } }] }, { text: "Ready for review." }]],
+    });
+    const env = createToolEnv();
+    // A slow executor (real Gmail lookups) lets both calls arrive before either finishes.
+    const invoke = env.executor.invoke.bind(env.executor);
+    env.executor.invoke = async (req) => {
+      await new Promise((r) => setTimeout(r, 100));
+      return invoke(req);
+    };
+    const { runtime } = runtimeFor(manager, env);
+    const paused = await runtime.run(input("reply to sarah twice"));
+    expect(paused.status).toBe("waiting_for_approval");
+    expect(env.approvals).toHaveLength(1);
+    expect(paused.approvalId).toBe(env.approvals[0]!.approvalId);
+    const texts = mock().toolResults.map((r) => r.text ?? "");
+    expect(texts.filter((t) => t.includes("AWAITING_USER_APPROVAL"))).toHaveLength(1);
+    expect(texts.filter((t) => t.includes("Another action is already waiting"))).toHaveLength(1);
+  });
+
   it("refuses a tampered approval even though Claude asked for it", async () => {
     const { manager, mock } = setup({ turns: [[{ tool: "gmail__reply", args: { messageId: "m1", body: "hi" } }], [{ text: "That couldn't be sent." }]] });
     const { runtime, env } = runtimeFor(manager);
