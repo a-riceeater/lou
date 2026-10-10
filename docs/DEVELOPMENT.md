@@ -25,7 +25,7 @@ npm run dev
 
 Health check: `curl http://127.0.0.1:8787/health`.
 
-Without `OPENAI_API_KEY` everything except the agent works, and agent requests fail with a clear "model isn't configured" message, unless you use the Codex CLI provider.
+Without `OPENAI_API_KEY` everything except the agent works, and agent requests fail with a clear "model isn't configured" message, unless you use the Codex CLI or Claude Code provider.
 
 ### Using your Codex / ChatGPT login instead of an API key
 
@@ -36,6 +36,16 @@ codex --version
 ```
 
 Set `AI_PROVIDER=codex_cli` in `apps/server/.env` (or pick **Codex CLI** under **Settings → Assistant model**). Lou runs `codex app-server` locked down so it can only act through Lou's own tools and approvals. Details, security model and troubleshooting: [MODEL_PROVIDERS.md](MODEL_PROVIDERS.md).
+
+### Using your Claude login instead of an API key
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude auth login
+claude --version
+```
+
+Set `AI_PROVIDER=claude_cli` in `apps/server/.env` (or pick **Claude Code** under **Settings → Assistant model**, where you can also choose the Claude model). Lou runs `claude --print` locked down, so it can only act through Lou's own tools and approvals and doesn't load your personal Claude Code settings. Details: [MODEL_PROVIDERS.md](MODEL_PROVIDERS.md#claude-code-provider).
 
 ### Pairing a device
 
@@ -107,6 +117,7 @@ Or inside the real host with `LOU_UI_DEV_URL=http://localhost:5173` set before s
 | `dotnet test --project apps/windows/tests/Lou.Agent.Tests/Lou.Agent.Tests.csproj` | Command signature/expiry/replay checks, local path policy, tools, DPAPI storage, protocol shape |
 | `npx tsx scripts/e2e-windows.ts` | Real `Lou.exe` paired to an in-process server, executing signed device commands |
 | `npx tsx scripts/e2e-codex.ts` | Real Codex CLI (your login) through Lou: tools, approval, exact send, thread reuse and resume after restart (fake Gmail) |
+| `npx tsx scripts/e2e-claude.ts` | Real Claude Code (your login) through Lou: tools over the MCP bridge, approval, exact send, session reuse and resume after restart, no native tools, structured tasks (fake Gmail). `LOU_CLAUDE_MODEL=haiku` keeps it cheap |
 | `npx tsx scripts/e2e-windows-codex.ts` | Real `Lou.exe` palette driven through WebView2 DevTools with the real Codex CLI: streaming, approval editing, Send |
 
 ## Conventions

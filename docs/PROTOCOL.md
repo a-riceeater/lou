@@ -92,8 +92,8 @@ The signature covers the exact transmitted string, so no cross-language canonica
 | `GET /api/workflows` | Workflows |
 | `GET /api/notifications` · `POST /api/notifications/:id/{read,dismiss}` | Attention feed |
 | `GET /api/audit?runId=` | Audit log |
-| `GET/PATCH /api/settings` | Emergency controls and `aiProvider` (`openai_api` | `codex_cli`) |
-| `GET /api/providers?probe=1` | Provider status (state, summary, hint, details such as auth type and CLI version); `probe` starts and checks Codex |
+| `GET/PATCH /api/settings` | Emergency controls, `aiProvider` (`openai_api` \| `codex_cli` \| `claude_cli`) and `claudeModel` (an alias or model name, or `null` for Claude Code's default) |
+| `GET /api/providers?probe=1` | Provider status (state, summary, hint, details such as auth type and CLI version); `probe` starts and checks Codex and re-checks Claude Code |
 | `POST /api/transcribe` (multipart `file`) | Voice → text |
 
 Errors: `{ "error": { "code", "message", "retryable" } }` with codes from `packages/shared/src/errors.ts` (e.g. `AUTH_REQUIRED` 424 means an account must reconnect, `APPROVAL_MISMATCH` 409, `POLICY_DENIED` 403).

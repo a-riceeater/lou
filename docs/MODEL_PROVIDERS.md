@@ -1,13 +1,89 @@
 # Model providers
 
-Lou can be powered by either backend. Everything else (tools, Gmail, approvals, skills, memory, workflows, events, devices, auditing) is the same for both.
+Lou can be powered by any of these backends. Everything else (tools, Gmail, approvals, skills, memory, workflows, events, devices, auditing) is the same for both.
 
 | Provider | Setting | Authentication | Best for |
 | --- | --- | --- | --- |
 | **OpenAI API** | `AI_PROVIDER=openai_api` (default) | `OPENAI_API_KEY` | Servers with an API key; default model GPT-6 Luna (`LOU_MODEL`) |
 | **Codex CLI** | `AI_PROVIDER=codex_cli` | Your existing `codex login` (ChatGPT or API key), stored by Codex in `CODEX_HOME` | Using an eligible ChatGPT/Codex plan instead of an API key |
+| **Claude Code** | `AI_PROVIDER=claude_cli` | Your existing `claude auth login` (Claude subscription, Anthropic API key, or a cloud provider configured for Claude Code) | Using a Claude Pro/Max/Team plan instead of an API key |
 
 The setting is only the default. You can switch at any time in **Settings → Assistant model** without restarting the server. New requests use the selected provider. A run waiting for approval finishes on the provider that started it. Every switch is audited (`settings.changed`), and every run records which provider handled it.
+
+## Claude Code provider
+
+### Install and sign in (on the machine running the Lou server)
+
+```bash
+npm install -g @anthropic-ai/claude-code   # or the native installer: curl -fsSL https://claude.ai/install.sh | bash
+claude auth login      # browser sign-in with your Claude account (or set ANTHROPIC_API_KEY)
+claude --version       # 2.1 or newer recommended
+claude auth status
+```
+
+Then set `AI_PROVIDER=claude_cli` (or choose **Claude Code** in Settings). `OPENAI_API_KEY` isn't required in this mode. Without it, embeddings fall back to keyword search and voice transcription is unavailable.
+
+While Claude Code is selected, **Settings → Assistant model** also shows a **Claude model** picker: Claude Code's own default, or the latest Fable, Opus, Sonnet or Haiku. The choice applies from the next request and is audited like any other setting.
+
+Optional settings:
+
+| Variable | Purpose |
+| --- | --- |
+| `CLAUDE_PATH` | Full path to `claude` if it isn't on `PATH` (`~` is expanded; npm `.cmd` shims on Windows are handled automatically). `~/.local/bin` (native installer) and `~/.claude/local` are searched even when they aren't on `PATH`. |
+| `LOU_CLAUDE_MODEL` | Default model (an alias such as `sonnet`, or a full model name). The Settings picker overrides it. |
+| `LOU_CLAUDE_WORKSPACE` | Empty working directory given to Claude Code (default `${LOU_DATA_DIR}/claude-workspace`). Claude Code stores sessions per directory, so keep it stable. |
+| `LOU_CLAUDE_TURN_TIMEOUT_SECONDS` | Per-turn timeout (default 300) |
+
+Lou never reads, copies, or stores Claude Code credentials. Claude Code manages its own login. Lou runs `claude auth status --json` and keeps only whether you're signed in, the method (subscription, API key, cloud provider) and the plan, never the e-mail or organization.
+
+### How it works
+
+Each turn runs `claude --print --output-format stream-json` as a child process and reads its structured JSON event stream. It never parses terminal output. Lou's tools reach Claude Code through a small MCP server inside Lou that listens on `127.0.0.1` only:
+
+```text
+Windows palette ─HTTPS/WSS─▶ Lou server ──spawn, prompt on stdin──▶ claude --print (stream-json)
+                                 ▲   │                                   │
+                                 │   └── stream-json events ◀────────────┘
+                                 └── MCP tools/call (127.0.0.1, per-turn token) ◀── Claude asks to use a Lou tool
+                                 ▼
+                 ToolExecutor → ToolPolicyEngine → ApprovalManager → Gmail / devices / …
+```
+
+- **Conversations ↔ sessions.** Each Lou conversation maps to a Claude Code session ID, saved in `provider_threads`. Later turns pass `--resume`, so history isn't re-sent, including after a server restart. If Claude Code no longer has the session, Lou starts a new one seeded with recent history from its own database. Lou's database stays authoritative.
+- **Same context as the other runtimes.** Each turn carries Lou's system prompt (replacing Claude Code's coding prompt), the relevant memories, the skill index, connected accounts and devices, and security rules, all built by the same context provider.
+- **Streaming.** Text deltas (`--include-partial-messages`) become `agent.delta` WebSocket frames. **Cancel** stops the turn's process.
+- **Single-shot tasks** (importance classification, workflow drafting, the improvement evaluator) run as unsaved sessions (`--no-session-persistence`) with no Lou tools and a JSON schema (`--json-schema`).
+
+### Security: Lou's tools stay authoritative
+
+- **Lou's tools are Claude's only tools.** Every built-in tool is off (`--tools ""`). The only MCP server is Lou's (`--strict-mcp-config`), and only its tools are pre-approved (`--allowedTools mcp__lou`, `--permission-mode dontAsk`). Every call runs through the normal **ToolExecutor → ToolPolicyEngine → ApprovalManager** path, with the same approvals, hash-bound edits and exact execution as the other providers.
+- **Your personal Claude Code setup stays out.** `--setting-sources ""` skips user, project and local settings, so your `~/.claude/CLAUDE.md`, hooks, plugins, permission rules and MCP servers aren't loaded. Skills and slash commands are disabled. Sessions run in an empty working directory.
+- **The bridge is private to each turn.** The MCP server accepts only loopback connections with a `127.0.0.1`/`localhost` Host header and a random bearer token. The token exists for one turn and only exposes that turn's tools. It is written to a `0600` file in a private temporary directory, never put on the command line, and deleted when the turn ends.
+- **Defence in depth.** Lou checks Claude Code's `init` event. If any tool other than Lou's (or `StructuredOutput` for schema tasks) or any other MCP server is present, the turn is stopped. A tool use outside Lou's tools also stops the turn and fails the run. Lou refuses to launch Claude Code with `--dangerously-skip-permissions` or `bypassPermissions`, and refuses a CLI too old to support these flags.
+- **Process safety.** Claude Code is launched with `spawn` and an argument array, never a shell. Prompts travel over stdin. Lou enforces timeouts, caps output, and kills child processes on server exit.
+
+### Troubleshooting
+
+| Settings shows | Meaning and fix |
+| --- | --- |
+| **Unavailable**: Claude Code executable not found | Install it (above), or set `CLAUDE_PATH`. Under systemd, the native installer's `~/.local/bin` belongs to whoever ran it; install system-wide with npm instead (below). |
+| **Unavailable**: CLAUDE_PATH … doesn't exist / isn't readable | Same causes as for Codex: the service user can't see that path (`ProtectHome=true`, home directory permissions). |
+| **Not signed in**: Run: `claude auth login` | Sign in as the **same OS user that runs the Lou server**, then press **Check status**. An expired login is noticed on the next request and shown here too. |
+| **Unavailable**: … is too old for Lou | Update Claude Code: `claude update` (or `npm install -g @anthropic-ai/claude-code@latest`). |
+
+### Running under systemd (Ubuntu)
+
+Claude Code keeps its login and sessions in the service user's home. With the provided unit, the `lou` user's home is `/var/lib/lou`, so Claude Code uses `/var/lib/lou/.claude`. Sign in as that user once:
+
+```bash
+sudo npm install -g @anthropic-ai/claude-code
+sudo -u lou -H claude auth login            # follow the printed URL
+sudo -u lou -H claude auth status
+echo 'AI_PROVIDER=claude_cli' | sudo tee -a /etc/lou/lou.env
+sudo systemctl restart lou
+```
+
+On a headless server, `claude setup-token` (Claude subscription) creates a long-lived token you can put in the service environment as `CLAUDE_CODE_OAUTH_TOKEN`. Alternatively, set `ANTHROPIC_API_KEY`.
 
 ## Codex CLI provider
 
@@ -63,7 +139,7 @@ Codex is a capable coding agent. Lou locks it down so it can't act on its own:
 
 ### Failures and fallback
 
-Lou never switches providers silently. If a Codex request fails (not signed in, crashed, rate limited), the palette shows what went wrong. If the OpenAI API is configured, it also offers **Try with OpenAI API**. That retry is a one-off, explicit override recorded in the audit log (`run.started` with `providerOverride: true`).
+Lou never switches providers silently. If a Codex or Claude Code request fails (not signed in, crashed, rate limited), the palette shows what went wrong. If another provider is usable (the OpenAI API first, then a ready Codex or Claude Code), it also offers **Try with** that provider. That retry is a one-off, explicit override recorded in the audit log (`run.started` with `providerOverride: true`).
 
 ### Older Codex versions
 
@@ -76,7 +152,7 @@ If the installed CLI has no `app-server` command, agent requests fail with an up
 | **Unavailable**: Codex executable not found | Install with `npm install -g @openai/codex`, or set `CODEX_PATH`. `npm start` and `npm run dev` read `apps/server/.env`, not a `.env` at the repo root. Under systemd, make sure `codex` is on the service's `PATH`. |
 | **Unavailable**: CODEX_PATH … doesn't exist as seen by the server | The server process can't see that path. The provided systemd unit runs as `lou` with `ProtectHome=true`, so nothing under `/home` is visible. Install Codex system-wide (below) instead of using a copy in your own home directory. |
 | **Unavailable**: CODEX_PATH … isn't readable | The server's OS user lacks permission on the file or a parent directory (Ubuntu home directories are `750`). Install Codex system-wide, or run the server as the user who owns that path. |
-| **Not signed in**: Run: `codex login` | Sign in as the **same OS user that runs the Lou server** (see below), then press **Check Codex status**. |
+| **Not signed in**: Run: `codex login` | Sign in as the **same OS user that runs the Lou server** (see below), then press **Check status**. |
 | **Unavailable**: … has no App Server | Update Codex: `npm install -g @openai/codex@latest`. |
 | **Unavailable**: MCP servers could not be disabled | A server in `~/.codex/config.toml` couldn't be turned off. Remove it, or point Lou at a dedicated `CODEX_HOME`. |
 | **Restarting** | Codex crashed. Lou restarts it with backoff; details are in the server log (`journalctl -u lou`). |
