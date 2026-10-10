@@ -362,6 +362,7 @@ describe("lou mcp bridge", () => {
     const lease = await bridge.open({ tools: [{ name: "gmail__search", description: "Search", inputSchema: { type: "object" } }], call: async (name) => (calls.push(name), { text: "ok", isError: false }) });
     const post = (body: unknown, headers: Record<string, string> = { authorization: `Bearer ${lease.token}` }) =>
       fetch(lease.url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    const rpc = async (body: unknown): Promise<any> => (await post(body)).json();
     try {
       expect((await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, {})).status).toBe(401);
       expect((await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: "Bearer wrong" })).status).toBe(401);
@@ -375,13 +376,13 @@ describe("lou mcp bridge", () => {
       });
       expect(rebinding).toBe(403);
 
-      const init = await (await post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })).json();
+      const init = await rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } });
       expect(init.result).toMatchObject({ protocolVersion: "2025-06-18", serverInfo: { name: "lou" } });
       expect((await post({ jsonrpc: "2.0", method: "notifications/initialized" })).status).toBe(202);
-      expect((await (await post({ jsonrpc: "2.0", id: 2, method: "tools/list" })).json()).result.tools.map((t: { name: string }) => t.name)).toEqual(["gmail__search"]);
-      const unknown = await (await post({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "system__shell", arguments: {} } })).json();
+      expect((await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" })).result.tools.map((t: { name: string }) => t.name)).toEqual(["gmail__search"]);
+      const unknown = await rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "system__shell", arguments: {} } });
       expect(unknown.error).toMatchObject({ code: -32602 });
-      const called = await (await post({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "gmail__search", arguments: { query: "x" } } })).json();
+      const called = await rpc({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "gmail__search", arguments: { query: "x" } } });
       expect(called.result).toEqual({ content: [{ type: "text", text: "ok" }], isError: false });
       expect(calls).toEqual(["gmail__search"]);
 
