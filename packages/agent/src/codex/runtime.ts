@@ -15,27 +15,14 @@ import {
   toApiName,
   type LoopOutcome,
 } from "../shared";
-import type { AgentContinuation, AgentInput, AgentRunResult, AgentRuntime, ContextProvider, ProgressSink, RunContext, RunState, RunStore } from "../types";
+import type { AgentContinuation, AgentInput, AgentRunResult, AgentRuntime, ContextProvider, ProgressSink, ProviderThreadRecord, ProviderThreadStore, RunContext, RunState, RunStore } from "../types";
 import type { CodexAppServerManager, CodexLogger } from "./appServer";
 import type { DynamicToolCallParams, DynamicToolCallResponse, DynamicToolSpec, JsonValue } from "./protocol";
 import { runCodexTurn } from "./turn";
 
 /** Persisted mapping conversation → Codex thread. The app database stays authoritative. */
-export interface CodexThreadRecord {
-  conversationId: string;
-  threadId: string;
-  /** Lou tool IDs registered as dynamic tools on this thread (fixed at thread start). */
-  toolset: string[];
-  /** Facts to tell Codex on the next turn (e.g. "the user cancelled that action"). */
-  notes: string[];
-  /** Families the model asked for that the thread doesn't have yet. */
-  wantedFamilies: string[];
-}
-
-export interface CodexThreadStore {
-  get(conversationId: string): Promise<CodexThreadRecord | undefined>;
-  save(record: CodexThreadRecord): Promise<void>;
-}
+export type CodexThreadRecord = ProviderThreadRecord;
+export type CodexThreadStore = ProviderThreadStore;
 
 export interface CodexRuntimeDeps {
   manager: CodexAppServerManager;

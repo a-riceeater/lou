@@ -76,9 +76,31 @@ export interface RunState {
   provider?: ProviderId;
   /** Codex App Server linkage (Codex provider only). */
   codex?: { threadId: string; turnId: string | null };
+  /** Claude Code session linkage (Claude CLI provider only). */
+  claude?: { sessionId: string };
 }
 
-export type ProviderId = "openai_api" | "codex_cli";
+export type ProviderId = "openai_api" | "codex_cli" | "claude_cli";
+
+/**
+ * Persisted mapping conversation → provider-side thread (a Codex thread, a
+ * Claude Code session). A cache for continuity: the app database stays authoritative.
+ */
+export interface ProviderThreadRecord {
+  conversationId: string;
+  threadId: string;
+  /** Lou tool IDs exposed on this thread. */
+  toolset: string[];
+  /** Facts to tell the model on the next turn (e.g. "the user cancelled that action"). */
+  notes: string[];
+  /** Families the model asked for that the thread doesn't have yet. */
+  wantedFamilies: string[];
+}
+
+export interface ProviderThreadStore {
+  get(conversationId: string): Promise<ProviderThreadRecord | undefined>;
+  save(record: ProviderThreadRecord): Promise<void>;
+}
 
 export interface RunStore {
   create(state: RunState): Promise<void>;
