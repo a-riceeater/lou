@@ -8,3 +8,4 @@ export { familyTools, formatToolResult, recordToolOutcome, toApiName, fromApiNam
 export * from "./tasks";
 export * from "./testing";
 export * from "./codex";
+export * from "./claude";
