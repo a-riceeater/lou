@@ -1,16 +1,16 @@
 import { LouError, type Result } from "@lou/shared";
 import { type ToolExecutor, type ToolFamily, type ToolRegistry } from "@lou/tools";
-import { formatContext, SYSTEM_PROMPT } from "../prompts";
+import { SYSTEM_PROMPT } from "../prompts";
 import {
+  agentToolset,
   beginResume,
+  composeAgentTurn,
   ENABLE_FAMILY_TOOL,
   executeApproved,
-  familyTools,
   formatToolResult,
   fromApiName,
   recordToolOutcome,
   rejectionMessage,
-  requestFamilies,
   RunDriver,
   toApiName,
   type LoopOutcome,
@@ -109,7 +109,7 @@ export class CodexAgentRuntime implements AgentRuntime {
       const thread = await this.threadFor(input.conversationId, toolset, record);
       state.codex = { threadId: thread.record.threadId, turnId: null };
       state.exposedTools = thread.record.toolset;
-      const text = this.composeTurn(ctx, input.text, thread.fresh ? ctx.history : [], thread.record.notes);
+      const text = composeAgentTurn(ctx, input.text, thread.fresh ? ctx.history : [], thread.record.notes);
       if (thread.record.notes.length) {
         thread.record.notes = [];
         await this.deps.threads.save(thread.record);
@@ -166,17 +166,8 @@ export class CodexAgentRuntime implements AgentRuntime {
 
   // ---------------------------------------------------------------------------
 
-  /** Every built-in model tool plus the most relevant tools of matching external (MCP) families. */
   private toolsetFor(text: string, ctx: RunContext, wantedFamilies: string[]): string[] {
-    const families = this.deps.families();
-    const selected = new Set([...requestFamilies(text, ctx.history, families), ...ctx.families, ...wantedFamilies]);
-    const ids = new Set<string>();
-    for (const family of families) {
-      const external = family.id.startsWith("mcp.");
-      if (external && !selected.has(family.id)) continue;
-      for (const id of familyTools(this.deps.registry, families, family.id, text)) ids.add(id);
-    }
-    return [...ids].sort();
+    return agentToolset(this.deps.registry, this.deps.families(), text, ctx, wantedFamilies);
   }
 
   private threadParams() {
@@ -227,16 +218,6 @@ export class CodexAgentRuntime implements AgentRuntime {
       });
     }
     return specs;
-  }
-
-  private composeTurn(ctx: RunContext, request: string, history: RunContext["history"], notes: string[]): string {
-    const parts = [`<lou_context>\n${formatContext(ctx)}\n</lou_context>`];
-    if (history.length) {
-      parts.push(`<earlier_conversation>\n${history.map((h) => `${h.role}: ${h.content}`).join("\n")}\n</earlier_conversation>`);
-    }
-    for (const note of notes) parts.push(`<lou_note>${note}</lou_note>`);
-    parts.push(request);
-    return parts.join("\n\n");
   }
 
   private async turn(state: RunState, record: CodexThreadRecord, text: string, signal: AbortSignal): Promise<LoopOutcome> {

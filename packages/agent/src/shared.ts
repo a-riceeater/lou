@@ -1,5 +1,6 @@
 import { Bm25Index, LouError, toLouError, wrapUntrusted, type Result, type SerializedError } from "@lou/shared";
 import { selectFamilies, type AnyToolDefinition, type ToolExecutor, type ToolFamily, type ToolRegistry } from "@lou/tools";
+import { formatContext } from "./prompts";
 import type { AgentContinuation, AgentRunResult, PendingToolCall, ProgressSink, RunContext, RunState, RunStore } from "./types";
 
 /**
@@ -29,6 +30,37 @@ export function familyTools(registry: ToolRegistry, families: readonly ToolFamil
   const index = new Bm25Index(defs.map((d) => ({ id: d.id, text: `${d.id.replace(/[._]/g, " ")} ${d.description}` })));
   const ranked = index.search(text, max).map((h) => h.id);
   return ranked.length ? ranked : defs.slice(0, max).map((d) => d.id);
+}
+
+/**
+ * Toolset for runtimes that run their own reasoning loop (Codex, Claude Code):
+ * every built-in model tool plus the most relevant tools of matching external
+ * (MCP) families, including families the model asked for earlier.
+ */
+export function agentToolset(registry: ToolRegistry, families: readonly ToolFamily[], text: string, ctx: RunContext, wantedFamilies: string[]): string[] {
+  const selected = new Set([...requestFamilies(text, ctx.history, families), ...ctx.families, ...wantedFamilies]);
+  const ids = new Set<string>();
+  for (const family of families) {
+    const external = family.id.startsWith("mcp.");
+    if (external && !selected.has(family.id)) continue;
+    for (const id of familyTools(registry, families, family.id, text)) ids.add(id);
+  }
+  return [...ids].sort();
+}
+
+/**
+ * The user turn sent to a runtime that keeps its own conversation (Codex,
+ * Claude Code): Lou's context block, earlier history when the provider-side
+ * thread is new, pending notes, then the request itself.
+ */
+export function composeAgentTurn(ctx: RunContext, request: string, history: RunContext["history"], notes: string[]): string {
+  const parts = [`<lou_context>\n${formatContext(ctx)}\n</lou_context>`];
+  if (history.length) {
+    parts.push(`<earlier_conversation>\n${history.map((h) => `${h.role}: ${h.content}`).join("\n")}\n</earlier_conversation>`);
+  }
+  for (const note of notes) parts.push(`<lou_note>${note}</lou_note>`);
+  parts.push(request);
+  return parts.join("\n\n");
 }
 
 /** Serializes a tool result for the model. External content is wrapped in the untrusted envelope. */
