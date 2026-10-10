@@ -1,4 +1,4 @@
-import type { ServerMessage } from "@lou/protocol";
+import type { AiProvider, ServerMessage } from "@lou/protocol";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { api } from "../api/client";
@@ -8,6 +8,8 @@ import { Presence } from "../components/Presence";
 import { useVoice } from "../components/useVoice";
 import { usePalette } from "../stores/palette";
 import "../styles/palette.css";
+
+const RETRY_LABEL: Record<AiProvider, string> = { openai_api: "Try with OpenAI API", codex_cli: "Try with Codex", claude_cli: "Try with Claude Code" };
 
 const reveal = {
   initial: { opacity: 0, height: 0 },
@@ -172,7 +174,7 @@ export function Palette() {
                 <div className="error-actions">
                   {s.error.fallbackProvider && (
                     <button className="btn btn-primary" type="button" onClick={() => void s.retryWith(s.error!.fallbackProvider!)}>
-                      {s.error.fallbackProvider === "openai_api" ? "Try with OpenAI API" : "Try with Codex"}
+                      {RETRY_LABEL[s.error.fallbackProvider]}
                     </button>
                   )}
                   {s.error.action === "reconnect" && (

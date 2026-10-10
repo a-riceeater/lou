@@ -378,7 +378,7 @@ details.dev summary {
   margin-top: 8px;
 }
 
-/* Model provider choice: two calm, selectable rows. */
+/* Model provider choice: calm, selectable rows. */
 .provider-list {
   display: grid;
   gap: 8px;
@@ -443,6 +443,10 @@ details.dev summary {
 }
 .provider-key {
   color: var(--ink-3);
+}
+.provider-model {
+  max-width: 260px;
+  margin: 12px 0 0;
 }
 
 /* Integrations with their own row (Spotify). */

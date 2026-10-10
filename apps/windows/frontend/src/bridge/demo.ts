@@ -99,12 +99,13 @@ const fixtures: Record<string, unknown> = {
     shuffle: false,
     repeat: "off",
   },
-  "GET /api/settings": { writeToolsDisabled: false, deviceControlDisabled: false, monitoringDisabled: false, agentPaused: false, autoActivateLowRiskSkills: false, aiProvider: "codex_cli" },
+  "GET /api/settings": { writeToolsDisabled: false, deviceControlDisabled: false, monitoringDisabled: false, agentPaused: false, autoActivateLowRiskSkills: false, aiProvider: "codex_cli", claudeModel: null },
   "GET /api/providers": {
     active: "codex_cli",
     items: [
       { id: "openai_api", label: "OpenAI API", active: false, state: "not_configured", summary: "Not set up", hint: "Set OPENAI_API_KEY on the server.", details: { Model: "gpt-6-luna", Authentication: "none" } },
       { id: "codex_cli", label: "Codex CLI", active: true, state: "ready", summary: "Connected", hint: null, details: { CLI: "installed (0.151.0)", Status: "connected", Authentication: "ChatGPT (plus)", Sandbox: "locked down: Lou tools only" } },
+      { id: "claude_cli", label: "Claude Code", active: false, state: "ready", summary: "Connected", hint: null, details: { CLI: "installed (2.1.296)", Status: "connected", Authentication: "Claude subscription (max)", Model: "Claude Code default", Sandbox: "locked down: Lou tools only" } },
     ],
   },
 };
