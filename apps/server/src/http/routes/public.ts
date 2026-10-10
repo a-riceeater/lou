@@ -21,6 +21,7 @@ export async function publicRoutes(app: FastifyInstance, s: Services): Promise<v
       provider: s.providers.active(),
       model: s.providers.modelLabel(),
       codex: s.codex.snapshot().state,
+      claude: s.claude.snapshot().state,
       integrations: { gmail: s.google.configured, instagram: s.instagram.configured, spotify: s.spotify.configured },
     };
   });

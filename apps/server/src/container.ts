@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  ClaudeAgentRuntime,
+  ClaudeCliManager,
+  ClaudeModelProvider,
   CodexAgentRuntime,
   CodexAppServerManager,
   CodexModelProvider,
@@ -20,7 +23,7 @@ import { BUILTIN_FAMILIES, ToolExecutor, ToolPolicyEngine, ToolRegistry } from "
 import { eq } from "drizzle-orm";
 import { ConversationStore } from "./agent/conversations";
 import { registerInternalTools } from "./agent/internalTools";
-import { DbCodexThreadStore } from "./agent/providerThreads";
+import { DbProviderThreadStore } from "./agent/providerThreads";
 import { ModelProviders } from "./agent/providers";
 import { ToolCallRecorder } from "./agent/recorder";
 import { DbRunStore } from "./agent/runStore";
@@ -65,6 +68,8 @@ export interface ServiceOverrides {
   spotify?: { maxRateLimitWaitMs?: number; sleep?: (ms: number) => Promise<void> };
   /** Codex App Server overrides (tests point this at a mock app server). */
   codex?: { explicitPath?: string; env?: NodeJS.ProcessEnv };
+  /** Claude Code overrides (tests point this at a mock claude CLI). */
+  claude?: { explicitPath?: string; env?: NodeJS.ProcessEnv };
 }
 
 export interface Services {
@@ -87,6 +92,7 @@ export interface Services {
   runtimeFor(provider: ProviderId): AgentRuntime;
   providers: ModelProviders;
   codex: CodexAppServerManager;
+  claude: ClaudeCliManager;
   agent: AgentService;
   memory: MemoryStore;
   skills: SkillRegistry;
@@ -129,7 +135,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
   const fetchImpl = overrides.fetch ?? fetch;
   const bus = new EventBus(logger);
   const audit = new AuditLog(db);
-  const settings = new SettingsStore(db, audit, { aiProvider: config.aiProvider });
+  const settings = new SettingsStore(db, audit, { aiProvider: config.aiProvider, claudeModel: config.claude.model ?? null });
   const users = new UserStore(db);
   const owner = users.ensureOwner(config.user);
 
@@ -150,10 +156,19 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     clientVersion: config.version,
     logger,
   });
+  const claudeManager = new ClaudeCliManager({
+    explicitPath: overrides.claude?.explicitPath ?? config.claude.path,
+    env: overrides.claude?.env,
+    workspaceDir: config.claude.workspaceDir,
+    logger,
+  });
+  // Read per request so a model chosen in Settings applies to the next turn.
+  const claudeModel = () => settings.get().claudeModel ?? undefined;
   const providers = new ModelProviders(
     settings,
     { model: apiModel, modelName: config.openai.model },
     { manager: codexManager, model: new CodexModelProvider(codexManager, { model: config.codex.model }), modelName: config.codex.model },
+    { manager: claudeManager, model: new ClaudeModelProvider(claudeManager, { model: claudeModel }), modelName: claudeModel },
     logger,
   );
   const model = providers.selected;
@@ -268,11 +283,27 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
       families,
       context,
       runs,
-      threads: new DbCodexThreadStore(db),
+      threads: new DbProviderThreadStore(db, "codex_cli"),
       progress: agent.progressSink(),
       logger,
       model: config.codex.model,
       turnTimeoutMs: config.codex.turnTimeoutMs,
+    }),
+  );
+  runtimes.set(
+    "claude_cli",
+    new ClaudeAgentRuntime({
+      manager: claudeManager,
+      registry,
+      executor,
+      families,
+      context,
+      runs,
+      threads: new DbProviderThreadStore(db, "claude_cli"),
+      progress: agent.progressSink(),
+      logger,
+      model: claudeModel,
+      turnTimeoutMs: config.claude.turnTimeoutMs,
     }),
   );
 
@@ -299,6 +330,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
     runtimeFor,
     providers,
     codex: codexManager,
+    claude: claudeManager,
     agent,
     memory,
     skills,
@@ -338,6 +370,7 @@ export function createServices(config: Config, logger: Logger, overrides: Servic
       gateway.close();
       await mcp.stop();
       await codexManager.stop();
+      await claudeManager.stop();
       db.$client.close();
     },
   };
@@ -368,6 +401,8 @@ function unconfiguredRuntime(runs: DbRunStore, agent: AgentService): AgentRuntim
         finalMessage: null,
         error: { code: "NOT_CONFIGURED" as const, message: "The assistant model isn't configured on the server (OPENAI_API_KEY).", retryable: false },
         actionsTaken: 0,
+        // Lets the failure offer a usable CLI provider explicitly.
+        provider: "openai_api" as const,
       };
       await runs.create(state);
       await runs.save(state);

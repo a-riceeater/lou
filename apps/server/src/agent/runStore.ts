@@ -1,4 +1,4 @@
-import type { RunState, RunStore } from "@lou/agent";
+import type { ProviderId, RunState, RunStore } from "@lou/agent";
 import type { HistoryItem, HistoryOutcome, RunStatus, RunStepStatus, RunView } from "@lou/protocol";
 import { TERMINAL_RUN_STATUSES } from "@lou/protocol";
 import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
@@ -57,9 +57,9 @@ export class DbRunStore implements RunStore {
   }
 
   /** Runs left mid-flight by a crash/restart are failed so they don't hang forever. */
-  providerOf(runId: string): "openai_api" | "codex_cli" | undefined {
+  providerOf(runId: string): ProviderId | undefined {
     const row = this.db.select({ provider: agentRuns.provider }).from(agentRuns).where(eq(agentRuns.id, runId)).get();
-    return row?.provider as "openai_api" | "codex_cli" | undefined;
+    return row?.provider as ProviderId | undefined;
   }
 
   recoverInterrupted(): number {

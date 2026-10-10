@@ -1,8 +1,11 @@
-import type { CodexAppServerManager, CodexHealth, ModelProvider, ModelRequest, ModelResponse, ProviderId } from "@lou/agent";
+import type { ClaudeCliManager, ClaudeHealth, CodexAppServerManager, CodexHealth, ModelProvider, ModelRequest, ModelResponse, ProviderId } from "@lou/agent";
 import type { ProviderStatus } from "@lou/protocol";
 import { LouError } from "@lou/shared";
 import type { SettingsStore } from "../core/settings";
 import type { Logger } from "../logger";
+
+/** Order in which another provider is offered after a failure. */
+const FALLBACK_ORDER: ProviderId[] = ["openai_api", "codex_cli", "claude_cli"];
 
 /**
  * Model provider selection. The provider is a setting (AI_PROVIDER default,
@@ -14,13 +17,14 @@ export class ModelProviders {
     private readonly settings: SettingsStore,
     private readonly api: { model: ModelProvider | undefined; modelName: string },
     private readonly codex: { manager: CodexAppServerManager; model: ModelProvider; modelName: string | undefined },
+    private readonly claude: { manager: ClaudeCliManager; model: ModelProvider; modelName: () => string | undefined },
     private readonly logger: Logger,
   ) {
-    // Start Codex when it becomes the selected provider; stop it when it isn't.
+    // Start Codex when it becomes the selected provider and stop it when it isn't; check Claude Code when it's selected.
     settings.onChange((next, previous) => {
       if (next.aiProvider === previous.aiProvider) return;
-      if (next.aiProvider === "codex_cli") this.warmUp();
-      else void codex.manager.stop();
+      if (next.aiProvider !== "codex_cli") void codex.manager.stop();
+      this.warmUp();
     });
   }
 
@@ -28,10 +32,11 @@ export class ModelProviders {
     return this.settings.get().aiProvider;
   }
 
-  /** Starts the Codex App Server in the background if it's the selected provider. */
+  /** Starts the Codex App Server, or checks Claude Code, in the background when it's the selected provider. */
   warmUp(): void {
-    if (this.active() !== "codex_cli") return;
-    void this.codex.manager.ensureStarted().catch((err) => this.logger.warn({ err: (err as Error).message }, "codex provider unavailable"));
+    const active = this.active();
+    if (active === "codex_cli") void this.codex.manager.ensureStarted().catch((err) => this.logger.warn({ err: (err as Error).message }, "codex provider unavailable"));
+    if (active === "claude_cli") void this.claude.manager.ensureReady().catch((err) => this.logger.warn({ err: (err as Error).message }, "claude provider unavailable"));
   }
 
   /** ModelProvider for single-shot tasks (classification, drafting, evaluation) following the selected provider. */
@@ -41,7 +46,8 @@ export class ModelProviders {
       return "selected";
     },
     complete: (request: ModelRequest, signal?: AbortSignal): Promise<ModelResponse> => {
-      const provider = this.active() === "codex_cli" ? this.codex.model : this.api.model;
+      const active = this.active();
+      const provider = active === "codex_cli" ? this.codex.model : active === "claude_cli" ? this.claude.model : this.api.model;
       if (!provider) throw new LouError("NOT_CONFIGURED", "The OpenAI API isn't configured on the server (OPENAI_API_KEY).");
       return provider.complete(request, signal);
     },
@@ -49,17 +55,30 @@ export class ModelProviders {
 
   /** A different provider that is usable right now, offered (never applied) after a failure. */
   fallbackFor(provider: ProviderId): ProviderId | undefined {
-    if (provider === "codex_cli") return this.api.model ? "openai_api" : undefined;
-    return this.codex.manager.state === "ready" ? "codex_cli" : undefined;
+    return FALLBACK_ORDER.find((id) => id !== provider && this.usable(id));
+  }
+
+  private usable(id: ProviderId): boolean {
+    if (id === "openai_api") return !!this.api.model;
+    if (id === "codex_cli") return this.codex.manager.state === "ready";
+    return this.claude.manager.state === "ready";
   }
 
   modelLabel(): string {
-    return this.active() === "codex_cli" ? `Codex CLI${this.codex.modelName ? ` (${this.codex.modelName})` : ""}` : this.api.modelName;
+    const active = this.active();
+    if (active === "codex_cli") return `Codex CLI${this.codex.modelName ? ` (${this.codex.modelName})` : ""}`;
+    if (active === "claude_cli") {
+      const model = this.claude.modelName();
+      return `Claude Code${model ? ` (${model})` : ""}`;
+    }
+    return this.api.modelName;
   }
 
   async statuses(probe: boolean): Promise<ProviderStatus[]> {
     const active = this.active();
     const codexHealth = probe || active === "codex_cli" ? await this.codex.manager.health() : this.codex.manager.snapshot();
+    // A probe re-checks Claude Code now; otherwise a recent check is reused.
+    const claudeHealth = probe ? await this.claude.manager.health() : active === "claude_cli" ? await this.claude.manager.health(false) : this.claude.manager.snapshot();
     return [
       {
         id: "openai_api",
@@ -71,6 +90,7 @@ export class ModelProviders {
         details: { Model: this.api.modelName, Authentication: this.api.model ? "API key" : "none" },
       },
       codexStatus(codexHealth, active === "codex_cli", this.codex.modelName),
+      claudeStatus(claudeHealth, active === "claude_cli", this.claude.modelName()),
     ];
   }
 }
@@ -95,4 +115,30 @@ function codexStatus(h: CodexHealth, active: boolean, model: string | undefined)
   if (model) details.Model = model;
   if (h.state === "ready") details.Sandbox = "locked down: Lou tools only";
   return { id: "codex_cli", label: "Codex CLI", active, state: h.state, summary: c.summary, hint: c.hint, details };
+}
+
+const CLOUD_LABELS: Record<string, string> = { bedrock: "Amazon Bedrock", vertex: "Google Vertex AI", foundry: "Microsoft Foundry" };
+
+function claudeStatus(h: ClaudeHealth, active: boolean, model: string | undefined): ProviderStatus {
+  const copy: Record<string, { summary: string; hint: string | null }> = {
+    ready: { summary: "Connected", hint: null },
+    starting: { summary: "Checking", hint: null },
+    stopped: { summary: "Not checked", hint: active ? null : "Select it to check Claude Code." },
+    not_installed: { summary: "Unavailable", hint: `${h.lastError ?? "Claude Code executable not found"}. Install it with: npm install -g @anthropic-ai/claude-code` },
+    not_signed_in: { summary: "Not signed in", hint: "Run: claude auth login" },
+    error: { summary: "Unavailable", hint: h.lastError },
+  };
+  const c = copy[h.state] ?? { summary: h.state, hint: h.lastError };
+  const details: Record<string, string> = {
+    CLI: h.installed ? `installed${h.cliVersion ? ` (${h.cliVersion})` : ""}` : h.state === "stopped" ? "not checked" : "not found",
+    Status: c.summary.toLowerCase(),
+  };
+  if (h.auth) {
+    const { method, plan, provider } = h.auth;
+    details.Authentication =
+      method === "subscription" ? `Claude subscription${plan ? ` (${plan})` : ""}` : method === "apiKey" ? "API key" : method === "cloud" ? (CLOUD_LABELS[provider ?? ""] ?? provider ?? "cloud provider") : "signed in";
+  } else if (h.state === "not_signed_in") details.Authentication = "not signed in";
+  details.Model = model ?? "Claude Code default";
+  if (h.state === "ready") details.Sandbox = "locked down: Lou tools only";
+  return { id: "claude_cli", label: "Claude Code", active, state: h.state, summary: c.summary, hint: c.hint, details };
 }
