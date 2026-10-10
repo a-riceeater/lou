@@ -169,6 +169,22 @@ describe("provider integration", () => {
     const retry = bridge.apiCalls("/api/runs")[1];
     expect(retry.body).toMatchObject({ text: "hello", provider: "openai_api" });
   });
+
+  it("names Claude Code when it's the provider offered for a retry", async () => {
+    const user = userEvent.setup();
+    render(<Palette />);
+    await user.type(screen.getByLabelText("Ask Lou"), "hello{Enter}");
+    act(() =>
+      bridge.server("agent.completed", {
+        runId: "run_1",
+        status: "failed",
+        message: null,
+        error: { code: "NOT_CONFIGURED", message: "The assistant model isn't configured on the server (OPENAI_API_KEY).", details: { provider: "openai_api", fallbackProvider: "claude_cli" } },
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Try with Claude Code" }));
+    expect(bridge.apiCalls("/api/runs")[1].body).toMatchObject({ text: "hello", provider: "claude_cli" });
+  });
 });
 
 describe("new chat", () => {
